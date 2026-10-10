@@ -11,13 +11,15 @@ final class StatusItemController: NSObject {
     private weak var panelController: NotchPanelController?
 
     private let onOpenSettings: () -> Void
+    private let onOpenHistory: () -> Void
 
     init(service: MonitorService, prefs: Preferences, panelController: NotchPanelController,
-         onOpenSettings: @escaping () -> Void) {
+         onOpenSettings: @escaping () -> Void, onOpenHistory: @escaping () -> Void) {
         self.service = service
         self.prefs = prefs
         self.panelController = panelController
         self.onOpenSettings = onOpenSettings
+        self.onOpenHistory = onOpenHistory
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -39,8 +41,11 @@ final class StatusItemController: NSObject {
     }
 
     private func buildMenu(_ menu: NSMenu) {
-        // 只保留「设置」与「退出」——其余（展开/收起、采样间隔、自身开销）都在设置界面里，
-        // 菜单越短越不打扰。
+        // 菜单保持极简：历史统计 / 设置 / 退出，其余都收在设置界面里。
+        let history = NSMenuItem(title: "历史统计", action: #selector(openHistory), keyEquivalent: "h")
+        history.target = self
+        menu.addItem(history)
+
         let settings = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
@@ -55,6 +60,10 @@ final class StatusItemController: NSObject {
 
     @objc private func openSettings() {
         onOpenSettings()
+    }
+
+    @objc private func openHistory() {
+        onOpenHistory()
     }
 
     private static func intervalTitle(_ value: Double) -> String {

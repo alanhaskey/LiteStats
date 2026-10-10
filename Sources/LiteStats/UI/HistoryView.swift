@@ -16,6 +16,7 @@ struct HistoryView: View {
     @State private var monthHeat: [Date: Double] = [:]
     @State private var showResetAlert = false
     @State private var resetNote = ""
+    @State private var hoveredBucket: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -27,7 +28,7 @@ struct HistoryView: View {
             footer
         }
         .padding(16)
-        .frame(width: 640, height: 706, alignment: .topLeading)
+        .frame(width: 640, height: 748, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
         .task(id: selection) { reloadSummary() }
         .task(id: HeatKey(month: displayMonth, metric: chartMetric)) { reloadMonthHeat() }
@@ -201,8 +202,21 @@ struct HistoryView: View {
                 .labelsHidden()
                 .frame(width: 220)
             }
-            Canvas { context, size in
-                drawChart(context: context, size: size)
+            GeometryReader { geo in
+                Canvas { context, size in
+                    drawChart(context: context, size: size)
+                }
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let point):
+                        let inset: CGFloat = 14
+                        let slot = max(1, (geo.size.width - inset * 2) / CGFloat(max(buckets.count, 1)))
+                        let index = Int((point.x - inset) / slot)
+                        hoveredBucket = (index >= 0 && index < buckets.count) ? index : nil
+                    case .ended:
+                        hoveredBucket = nil
+                    }
+                }
             }
             .frame(height: 120)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.04)))
@@ -227,29 +241,42 @@ struct HistoryView: View {
         var value: Double
         var rawText: String
         var isPeak: Bool
+        var isEmpty: Bool = false
     }
 
     private var buckets: [Bucket] {
         guard let s = summary else { return [] }
-        let byHour = isSingleDay
-        var groups: [Date: (Double, String)] = [:]
         let calendar = Calendar.current
+
+        if isSingleDay {
+            // 单日固定 24 个时段（纯函数，便于单测）
+            let slots = HistoryChartData.singleDaySlots(hourly: s.hourly, metric: chartMetric)
+            var dayStart = calendar.startOfDay(for: Date())
+            if let first = s.hourly.first {
+                dayStart = calendar.startOfDay(for: first.hourStart)
+            }
+            return slots.map { slot in
+                Bucket(label: String(format: "%02d", slot.hour),
+                       date: calendar.date(byAdding: .hour, value: slot.hour, to: dayStart) ?? dayStart,
+                       value: slot.normalized,
+                       rawText: slot.text,
+                       isPeak: slot.isPeak,
+                       isEmpty: slot.isEmpty)
+            }
+        }
+
+        // 多日：按天聚合
+        var groups: [Date: (Double, String)] = [:]
         for hour in s.hourly {
-            let key: Date = byHour
-                ? calendar.date(bySettingHour: calendar.component(.hour, from: hour.hourStart),
-                                minute: 0, second: 0, of: hour.hourStart) ?? hour.hourStart
-                : calendar.startOfDay(for: hour.hourStart)
+            let key = calendar.startOfDay(for: hour.hourStart)
             let value = chartMetric.value(of: hour)
-            let text = chartMetric.format(value)
-            groups[key] = ((groups[key]?.0 ?? 0) + value, text)
+            groups[key] = ((groups[key]?.0 ?? 0) + value, chartMetric.formatBucket(value))
         }
         let sorted = groups.sorted { $0.key < $1.key }
         guard let maxValue = sorted.map(\.value.0).max(), maxValue > 0 else { return [] }
         let peakKey = sorted.max { $0.value.0 < $1.value.0 }?.key
         return sorted.map { key, pair in
-            Bucket(label: byHour
-                   ? String(format: "%02d", calendar.component(.hour, from: key))
-                   : "\(calendar.component(.day, from: key))",
+            Bucket(label: "\(calendar.component(.day, from: key))",
                    date: key,
                    value: min(1, pair.0 / maxValue),
                    rawText: pair.1,
@@ -258,6 +285,8 @@ struct HistoryView: View {
     }
 
     private var peakBucket: Bucket? { buckets.first { $0.isPeak } }
+
+    private func hourLabel(_ label: String) -> String { "\(label):00" }
 
     private func peakLabel(_ bucket: Bucket) -> String {
         isSingleDay
@@ -277,12 +306,25 @@ struct HistoryView: View {
         let slot = (size.width - inset * 2) / CGFloat(items.count)
         let barWidth = max(2, slot * 0.62)
 
+        let hovered = hoveredBucket.flatMap { $0 < items.count ? $0 : nil }
+
         for (index, item) in items.enumerated() {
             let x = inset + slot * CGFloat(index) + (slot - barWidth) / 2
-            let height = max(1, chartHeight * CGFloat(item.value))
+            let height = max(1.5, chartHeight * CGFloat(item.value))
             let rect = CGRect(x: x, y: size.height - inset - height, width: barWidth, height: height)
-            let color: Color = item.isPeak ? chartMetric.peakColor : chartMetric.color
+            let color: Color = item.isEmpty
+                ? Color.primary.opacity(0.10)
+                : (item.isPeak ? chartMetric.peakColor : chartMetric.color)
             context.fill(Path(roundedRect: rect, cornerRadius: min(3, barWidth / 2)), with: .color(color))
+
+            // 悬停的时段：加一根竖向指示线，方便对准
+            if index == hovered {
+                var guide = Path()
+                guide.move(to: CGPoint(x: x + barWidth / 2, y: inset * 0.6))
+                guide.addLine(to: CGPoint(x: x + barWidth / 2, y: size.height - inset))
+                context.stroke(guide, with: .color(chartMetric.color.opacity(0.5)), lineWidth: 1)
+            }
+
             let showLabel = items.count <= 12 || index % 4 == 0 || item.isPeak
             if showLabel {
                 let text = context.resolve(Text(item.label)
@@ -290,6 +332,22 @@ struct HistoryView: View {
                     .foregroundStyle(item.isPeak ? Color.primary : Theme.subtleLabel))
                 context.draw(text, at: CGPoint(x: x + barWidth / 2, y: size.height - inset + 6), anchor: .top)
             }
+        }
+
+        // 悬停气泡：显示"时刻 · 数值"
+        if let hovered {
+            let item = items[hovered]
+            let centerX = inset + slot * CGFloat(hovered) + slot / 2
+            let label = "\(hourLabel(item.label)) · \(item.rawText)"
+            let text = context.resolve(Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white))
+            let textSize = text.measure(in: CGSize(width: 300, height: 40))
+            var bubbleX = centerX - textSize.width / 2 - 6
+            bubbleX = min(max(2, bubbleX), max(2, size.width - textSize.width - 14))
+            let bubble = CGRect(x: bubbleX, y: 2, width: textSize.width + 12, height: textSize.height + 8)
+            context.fill(Path(roundedRect: bubble, cornerRadius: 6), with: .color(.black.opacity(0.78)))
+            context.draw(text, at: CGPoint(x: bubble.midX, y: bubble.midY), anchor: .center)
         }
     }
 
@@ -315,14 +373,14 @@ struct HistoryView: View {
                 Text("这段时间还没有按应用的记录")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.subtleLabel)
-                    .frame(height: 110, alignment: .top)
+                    .frame(height: 146, alignment: .top)
             } else {
                 VStack(spacing: 3) {
                     ForEach(apps) { app in
                         appRow(app)
                     }
                 }
-                .frame(height: 110, alignment: .top)
+                .frame(height: 146, alignment: .top)
             }
         }
     }
@@ -335,7 +393,7 @@ struct HistoryView: View {
         case .network: sorted = s.apps.sorted { $0.networkTotal > $1.networkTotal }
         case .memory: sorted = s.apps.sorted { $0.peakMemoryBytes > $1.peakMemoryBytes }
         }
-        return Array(sorted.prefix(6))
+        return Array(sorted.prefix(10))
     }
 
     private func appRow(_ app: AppUsage) -> some View {
@@ -439,6 +497,40 @@ struct HistoryView: View {
     }
 }
 
+/// 图表的纯计算部分（可单测）
+enum HistoryChartData {
+    struct HourSlot: Equatable {
+        let hour: Int
+        let rawValue: Double
+        let text: String
+        let normalized: Double       // 0...1，相对当天最大值
+        let isPeak: Bool
+        let isEmpty: Bool
+    }
+
+    /// 单日：**恒定返回 24 个槽位**（00…23）。没有记录的小时也占位（isEmpty = true），
+    /// 这样柱子位置稳定、可以直接对着钟点看。
+    static func singleDaySlots(hourly: [HourlyBucket], metric: HistoryMetric) -> [HourSlot] {
+        let calendar = Calendar.current
+        var byHour: [Int: Double] = [:]
+        for bucket in hourly {
+            let hour = calendar.component(.hour, from: bucket.hourStart)
+            byHour[hour, default: 0] += metric.value(of: bucket)
+        }
+        let maxValue = byHour.values.max() ?? 0
+        let peakHour = byHour.max { $0.value < $1.value }?.key
+        return (0..<24).map { hour in
+            let value = byHour[hour]
+            return HourSlot(hour: hour,
+                            rawValue: value ?? 0,
+                            text: value.map { metric.formatBucket($0) } ?? "无记录",
+                            normalized: (value != nil && maxValue > 0) ? min(1, (value ?? 0) / maxValue) : 0,
+                            isPeak: value != nil && hour == peakHour && maxValue > 0,
+                            isEmpty: value == nil)
+        }
+    }
+}
+
 /// `.task(id:)` 需要一个 Hashable 组合键
 private struct HeatKey: Hashable {
     let month: Date
@@ -537,9 +629,21 @@ enum HistoryMetric: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    /// 应用维度的数值（量级较小，用秒）
     func format(_ value: Double) -> String {
         switch self {
         case .cpu: return String(format: "%.1f 核·秒", value)
+        case .network, .memory: return Fmt.bytes(value)
+        }
+    }
+
+    /// 时段维度的数值：一小时可能累计到几千核·秒，换算成核·分/核·时更好读
+    func formatBucket(_ value: Double) -> String {
+        switch self {
+        case .cpu:
+            if value >= 3600 { return String(format: "%.1f 核·时", value / 3600) }
+            if value >= 60 { return String(format: "%.0f 核·分", value / 60) }
+            return String(format: "%.1f 核·秒", value)
         case .network, .memory: return Fmt.bytes(value)
         }
     }

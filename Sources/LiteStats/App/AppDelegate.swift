@@ -74,7 +74,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if prefs.showMenuBarItem {
             statusItem = StatusItemController(service: service, prefs: prefs,
                                               panelController: controller,
-                                              onOpenSettings: { [weak self] in self?.showSettings() })
+                                              onOpenSettings: { [weak self] in self?.showSettings() },
+                                              onOpenHistory: { [weak self] in self?.showHistory() })
         }
 
         NSLog("LiteStats 已启动：刘海=%@ 屏幕=%@ 指示条(左=%@ 右=%@) 耳长=%.0fpt",
@@ -126,7 +127,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if prefs.showMenuBarItem, statusItem == nil {
             statusItem = StatusItemController(service: service, prefs: prefs,
                                               panelController: controller,
-                                              onOpenSettings: { [weak self] in self?.showSettings() })
+                                              onOpenSettings: { [weak self] in self?.showSettings() },
+                                              onOpenHistory: { [weak self] in self?.showHistory() })
         } else if !prefs.showMenuBarItem {
             statusItem?.remove()
             statusItem = nil

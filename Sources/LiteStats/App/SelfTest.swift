@@ -169,8 +169,22 @@ enum SelfTest {
                   snap.gpu.utilization.map { "\(Int($0 * 100))%" } ?? "nil")
             check("网络主接口可识别", snap.network.interfaceName != nil, snap.network.interfaceName ?? "nil")
             check("磁盘信息可读", snap.disk != nil)
-            check("单次采样耗时 < 10 ms", service.lastSampleMillis < 10,
-                  String(format: "%.2f ms", service.lastSampleMillis))
+            // 采样耗时：看多次采样的中位数（典型路径），不看某一拍。
+            // 原因：温度是"每 N 拍刷一次、每次轮转读 8 个传感器"，那一拍本来就要 10–20ms，
+            // 只有最后一拍的断言会偶发误报。
+            var durations: [Double] = [service.lastSampleMillis]
+            for _ in 0..<7 {
+                pump(0.25)
+                durations.append(service.lastSampleMillis)
+            }
+            let sortedDurations = durations.sorted()
+            let median = sortedDurations[sortedDurations.count / 2]
+            let slowTicks = durations.filter { $0 > 10 }.count
+            info(String(format: "采样耗时：中位 %.2f ms，最大 %.2f ms，>10ms 的拍数 %d/%d",
+                        median, sortedDurations.last ?? 0, slowTicks, durations.count))
+            check("典型采样耗时中位数 < 5 ms", median < 5, String(format: "%.2f ms", median))
+            check("采样耗时上界 < 40 ms（温度刷新拍也在内）", (sortedDurations.last ?? 0) < 40,
+                  String(format: "%.2f ms", sortedDurations.last ?? 0))
         } else {
             check("采样到数据", false, "snapshot 为 nil")
         }
@@ -361,6 +375,23 @@ enum SelfTest {
                   HistoryCalendar.isCurrentMonth(HistoryCalendar.startOfMonth(for: Date())))
         } else {
             check("日历：能构造测试月份", false)
+        }
+
+        // 图表 24 槽位（纯函数）
+        let emptySlots = HistoryChartData.singleDaySlots(hourly: [], metric: .cpu)
+        check("今日时段图固定 24 个槽位（没有数据时也占位）",
+              emptySlots.count == 24 && emptySlots.allSatisfy { $0.isEmpty && $0.rawValue == 0 },
+              "\(emptySlots.count) 个")
+        check("时段标签是 00…23", emptySlots.first?.hour == 0 && emptySlots.last?.hour == 23,
+              "\(emptySlots.first?.hour ?? -1)…\(emptySlots.last?.hour ?? -1)")
+        if let day = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 10, hour: 17)) {
+            let bucket = HourlyBucket(hourStart: day, cpuSeconds: 3600, gpuPercentAverage: 0.5,
+                                      memoryBytesAverage: 8_000_000_000, networkIn: 1_000_000,
+                                      networkOut: 500_000, sampleCount: 60)
+            let slots = HistoryChartData.singleDaySlots(hourly: [bucket], metric: .cpu)
+            check("只有 17 点有数据时，其余 23 个槽位为空",
+                  slots.filter { !$0.isEmpty }.count == 1 && slots[17].isPeak && !slots[17].isEmpty,
+                  "非空 \(slots.filter { !$0.isEmpty }.count) 个，峰值时刻 \(slots.firstIndex { $0.isPeak } ?? -1)")
         }
 
         // 窗口能渲染（无法点鼠标，只能离屏渲染确认它真的画出来了）
