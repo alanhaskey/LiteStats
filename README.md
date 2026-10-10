@@ -1,15 +1,67 @@
 # LiteStats
 
-macOS 原生轻量系统监控。**信息不占菜单栏、不进 Dock，全部收进屏幕顶部的刘海（灵动岛）里**：
-鼠标悬浮刘海 → 面板下坠展开显示 CPU（总体 + 每核心）、GPU、内存、网络、磁盘、温度、风扇；鼠标移开 → 自动收起。
+<img src="docs/images/icon.png" width="110" align="right" alt="LiteStats 图标" />
+
+![平台](https://img.shields.io/badge/platform-macOS%2014%2B-black)
+![版本](https://img.shields.io/badge/version-1.0.2-blue)
+![许可](https://img.shields.io/badge/license-MIT-green)
+![依赖](https://img.shields.io/badge/dependencies-none-brightgreen)
+
+**macOS 原生轻量系统监控：信息不占菜单栏、不进 Dock，全部收进屏幕顶部的刘海（灵动岛）里。**
+
+鼠标悬浮刘海 → 面板下坠展开，显示 CPU（总体 + 每核心）、GPU、内存、网络、磁盘、温度、风扇；鼠标移开 → 自动收起。
 刘海两侧还能常驻一行自己选的指标（CPU／内存／GPU／网络／磁盘／温度／风扇）。
 
-> 为什么要自己做：Stats 信息量大、常驻开销高，很多东西用不上也没法裁剪。
-> LiteStats 只做一件事——把最关键的几项系统状态，放在你本来就一直在看的位置。
+> Why: Stats 信息量大、常驻开销高，很多东西用不上也没法裁剪。
+> LiteStats 只做一件事 —— 把最关键的几项系统状态，放在你本来就一直在看的位置。
+>
+> 实测常驻开销 **0.07–0.15% CPU / 16 MB 物理占用**（见 [实测开销](#实测开销)）。
 
----
+## 截图
 
-## 快速开始
+| 悬浮展开的面板 | 刘海常驻指示条 | 展开形变（水滴） |
+| --- | --- | --- |
+| ![面板](docs/images/panel.png) | ![指示条](docs/images/indicators.png) | ![形变](docs/images/morph.png) |
+
+| 无刘海屏上的常驻圆槽 | 圆槽长成面板 | 历史统计 |
+| --- | --- | --- |
+| ![圆槽](docs/images/slot.png) | ![展开](docs/images/slot-expanded.png) | ![历史](docs/images/history.png) |
+
+## 特性
+
+- **藏进刘海**：收起态与物理刘海像素级重合（纯黑填充、无描边），不占菜单栏、不进 Dock
+- **悬浮即用**：0.1s 确定性轮询判定悬浮，展开是动画化的水滴形变；点击可固定
+- **数据齐全**：CPU 总/分核、GPU、内存（含交换）、网络（上下行 + 主网卡）、磁盘、温度、风扇
+- **常驻指示条**：左右各选一个指标画在刘海两侧的黑耳里，长度统一、数值居中、展开时同步收进刘海
+- **多屏 / 无刘海屏**：外接屏与非刘海机型用顶部中心的**常驻圆槽**（表情 + 数据），交互完全一致
+- **本地历史统计**：月历按天查看、今日 24 时段图（可悬停）、应用排行 Top 10、网络流量与 CPU/GPU/内存累计
+- **零依赖**：纯 Swift + 系统框架（IOKit / SystemConfiguration / libproc / SwiftUI），不引入任何第三方库
+- **低开销**：收起态不构建 SwiftUI 视图树，指示条用纯 AppKit 绘制，温度低频轮转采样
+
+## 安装
+
+### 下载（推荐）
+
+到 [Releases](https://github.com/alanhaskey/LiteStats/releases) 下载 `LiteStats-<版本>.dmg`，
+打开后把 **LiteStats** 拖进「应用程序」。
+
+> ⚠️ 没有做代码签名与公证（没有 Apple 开发者证书），首次打开需要**右键 → 打开**，
+> 或先执行 `xattr -d com.apple.quarantine /Applications/LiteStats.app`。
+>
+> 系统要求：macOS 14+，Apple Silicon（在 M5 Pro 上开发与实测）。
+
+### 从源码构建
+
+只用 SwiftPM，**不需要 Xcode 工程**：
+
+```bash
+git clone https://github.com/alanhaskey/LiteStats.git
+cd LiteStats
+./scripts/build-app.sh release     # 组装 dist/LiteStats.app
+open "dist/LiteStats.app"          # 启动：常驻后台，无 Dock 图标
+```
+
+### 开发命令
 
 ```bash
 ./scripts/build-app.sh          # 组装 .app（本机没有可用 Xcode 工具链，全走 SPM）
@@ -420,3 +472,11 @@ E2E RESULT: PASS（展开 1 次 / 收起 1 次）
 
 > 本机没有开发者证书，签名是 **ad-hoc**。别人下载后首次打开需要「右键 → 打开」，
 > 或者 `xattr -d com.apple.quarantine /Applications/LiteStats.app`。
+
+## 许可
+
+[MIT](LICENSE) © 2026 alanhaskey
+
+温度读取用到了 Apple 未公开的 HID 传感器接口（`IOHIDEventSystemClientCreateWithType`），
+这是逆向所得的用法、不保证在未来系统版本上可用；代码里做了完整降级——
+读不到就不显示，绝不影响监控本身。
