@@ -46,12 +46,68 @@ enum IndicatorPalette {
 final class NotchIndicatorView: NSView {
     private var leftMetric: IndicatorMetric = .none
     private var rightMetric: IndicatorMetric = .none
-    private var leftEarWidth: CGFloat = 0
-    private var rightEarWidth: CGFloat = 0
+    /// 配置的耳朵长度（未乘进度）
+    private var configuredLeftEarWidth: CGFloat = 0
+    private var configuredRightEarWidth: CGFloat = 0
+
+    /// 耳朵伸出程度：1 = 完全伸出（收起态），0 = 完全收进物理刘海（展开态）。
+    /// 由 `animator()` 在 NSAnimationContext 里逐帧插值，和 SwiftUI 的水滴形变同步。
+    @objc dynamic var earProgress: CGFloat = 1 {
+        didSet { if earProgress != oldValue { needsDisplay = true } }
+    }
+
+    /// 当前实际耳宽（已乘进度）
+    var leftEarWidth: CGFloat { configuredLeftEarWidth * earProgress }
+    var rightEarWidth: CGFloat { configuredRightEarWidth * earProgress }
+
+    /// 带动画地伸出 / 收回耳朵。
+    ///
+    /// 不用 `animator()`：实测对自定义属性它会在中途停住（87 → 70 就不动了），
+    /// 原因是自定义 KVC 属性靠 AppKit 的通用动画机制，插值不可靠。
+    /// 这里直接用 60Hz 定时器 + easeOut 插值，行为确定、可被自检断言，单次动画只有 ~20 帧。
+    func setEarProgress(_ value: CGFloat, animated: Bool, duration: TimeInterval) {
+        let clamped = min(max(value, 0), 1)
+        animationTimer?.invalidate()
+        animationTimer = nil
+        guard animated, duration > 0.01, abs(clamped - earProgress) > 0.001 else {
+            earProgress = clamped
+            return
+        }
+        animationFrom = earProgress
+        animationTo = clamped
+        animationDuration = duration
+        animationStart = Date()
+
+        // 注意：Timer 的 block 是 @Sendable，闭包里不要再捕获/传递 Timer 本身
+        // （Swift 6 会报 "sending 'timer' risks causing data races"）。
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let t = min(1, Date().timeIntervalSince(self.animationStart) / self.animationDuration)
+                let eased = 1 - pow(1 - t, 3)          // easeOut
+                self.earProgress = self.animationFrom + (self.animationTo - self.animationFrom) * eased
+                if t >= 1 {
+                    self.animationTimer?.invalidate()
+                    self.animationTimer = nil
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        animationTimer = timer
+    }
+
+    private var animationTimer: Timer?
+    private var animationStart = Date()
+    private var animationFrom: CGFloat = 1
+    private var animationTo: CGFloat = 0
+    private var animationDuration: TimeInterval = 0.3
     /// 刘海底边相对菜单栏底边的抬高量（黑耳底边要贴齐刘海底边，否则出现 1pt 错台）
     private var notchBottomInset: CGFloat = 0
     /// 物理刘海的底部圆角半径，黑耳内侧要沿同一个弧走，才能"连成一体"
     private var notchCornerRadius: CGFloat = 10
+    /// 菜单栏带高度：耳朵必须按这个算高度，**不能用 bounds.height**
+    /// —— 窗口展开后 bounds 会变成 294pt，耳朵会被拉成一根长条。
+    private var bandHeight: CGFloat = 39
     private var snapshot: SystemSnapshot?
 
     /// 与外层容器一致：不翻转（原点左下）。绘制时按左下原点算。
@@ -65,10 +121,11 @@ final class NotchIndicatorView: NSView {
         // ⚠️ 只有真的选了指标才画黑耳。
         // 之前这里无条件用 collapsedLeftExtent（26pt），导致"没选任何指标"时刘海两边
         // 仍然各多出一块黑边、看起来像被撑宽了 —— 与"完全收入灵动岛"的预期不符。
-        leftEarWidth = (layout.isFallback || self.leftMetric == .none) ? 0 : layout.collapsedLeftExtent
-        rightEarWidth = (layout.isFallback || self.rightMetric == .none) ? 0 : layout.collapsedRightExtent
+        configuredLeftEarWidth = (layout.isFallback || self.leftMetric == .none) ? 0 : layout.collapsedLeftExtent
+        configuredRightEarWidth = (layout.isFallback || self.rightMetric == .none) ? 0 : layout.collapsedRightExtent
         notchBottomInset = layout.notchBottomInset
         notchCornerRadius = layout.notchCornerRadius
+        bandHeight = layout.bandHeight
         needsDisplay = true
     }
 
@@ -78,26 +135,30 @@ final class NotchIndicatorView: NSView {
         if !isHidden { needsDisplay = true }
     }
 
-    var isActive: Bool { leftEarWidth > 0 || rightEarWidth > 0 }
+    var isActive: Bool { configuredLeftEarWidth > 0 || configuredRightEarWidth > 0 }
 
     // MARK: - 绘制
 
     override func draw(_ dirtyRect: NSRect) {
         guard bounds.width > 1, bounds.height > 1 else { return }
-        // 黑耳的底边贴齐物理刘海底边（不是菜单栏底边），高度就与刘海一致
-        let earHeight = max(1, bounds.height - notchBottomInset)
-        let earY = notchBottomInset
+        // 黑耳的底边贴齐物理刘海底边（不是菜单栏底边），高度就与刘海一致。
+        // 菜单栏带始终贴在窗口顶部，所以用 bounds.maxY 往上推。
+        let earHeight = max(1, bandHeight - notchBottomInset)
+        let earY = bounds.height - bandHeight + notchBottomInset
 
-        if leftEarWidth > 0 {
+        // 文字比黑耳更早淡出：黑耳收到一半时文字就没了，不会出现"半个字贴在刘海边上"
+        let textAlpha = min(max((earProgress - 0.45) / 0.55, 0), 1)
+
+        if leftEarWidth > 0.5 {
             let rect = CGRect(x: 0, y: earY, width: leftEarWidth, height: earHeight)
             drawEar(rect, side: .left)
-            drawMetric(leftMetric, in: rect)
+            drawMetric(leftMetric, in: rect, alpha: textAlpha)
         }
-        if rightEarWidth > 0 {
+        if rightEarWidth > 0.5 {
             let rect = CGRect(x: bounds.width - rightEarWidth, y: earY,
                               width: rightEarWidth, height: earHeight)
             drawEar(rect, side: .right)
-            drawMetric(rightMetric, in: rect)
+            drawMetric(rightMetric, in: rect, alpha: textAlpha)
         }
     }
 
@@ -152,8 +213,8 @@ final class NotchIndicatorView: NSView {
         path.fill()
     }
 
-    private func drawMetric(_ metric: IndicatorMetric, in rect: CGRect) {
-        guard metric != .none,
+    private func drawMetric(_ metric: IndicatorMetric, in rect: CGRect, alpha: CGFloat) {
+        guard metric != .none, alpha > 0.02,
               let text = attributedString(for: metric),
               text.length > 0 else { return }
 
@@ -170,7 +231,23 @@ final class NotchIndicatorView: NSView {
         // 内容水平居中：两侧耳长统一，居中后不管放什么指标看起来都是稳的
         let x = rect.midX - size.width / 2
         let y = rect.midY - size.height / 2
-        drawable.draw(at: CGPoint(x: x, y: y))
+
+        // 裁到黑耳范围内：耳朵正在收回时不会画到刘海上面去
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: rect.insetBy(dx: 2, dy: 0)).addClip()
+        // 按段（标签暗 / 数值亮）各自乘上淡出系数，保留原来的配色
+        let faded = NSMutableAttributedString(attributedString: drawable)
+        let full = NSRange(location: 0, length: faded.length)
+        var alphas: [(NSRange, NSColor)] = []
+        faded.enumerateAttribute(.foregroundColor, in: full) { value, range, _ in
+            if let color = value as? NSColor { alphas.append((range, color)) }
+        }
+        for (range, color) in alphas {
+            faded.addAttribute(.foregroundColor,
+                               value: color.withAlphaComponent(color.alphaComponent * alpha), range: range)
+        }
+        faded.draw(at: CGPoint(x: x, y: y))
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     private func scaled(_ text: NSAttributedString, factor: CGFloat) -> NSAttributedString {

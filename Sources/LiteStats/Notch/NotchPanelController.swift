@@ -215,12 +215,12 @@ final class NotchPanelController {
                 presentation.isExpanded = true
                 presentation.islandProgress = 1
             }
-            // 指示条要等面板动画长出来之后再隐藏，否则黑耳会先消失、留一小段空白
-            hideIndicator(after: animated ? expandAnimation : 0)
+            // 黑耳同步收进物理刘海（和水滴形变同时开始，时长对齐）
+            indicatorView.setEarProgress(0, animated: animated, duration: 0.34)
 
         case .collapsed:
-            // 收起时立刻把指示条放出来：面板淡出的这段时间由它填住黑耳区域
-            showIndicator()
+            // 黑耳同步长回来
+            indicatorView.setEarProgress(1, animated: animated, duration: 0.30)
             if animated {
                 withAnimation(.easeInOut(duration: collapseAnimation)) {
                     presentation.islandProgress = 0
@@ -244,25 +244,6 @@ final class NotchPanelController {
                 container.frame = CGRect(origin: .zero, size: layout.collapsedFrame.size)
                 hosting.frame = container.bounds
                 indicatorView.frame = container.bounds
-            }
-        }
-    }
-
-    private func showIndicator() {
-        indicatorView.isHidden = false
-        indicatorView.needsDisplay = true
-    }
-
-    private func hideIndicator(after delay: TimeInterval) {
-        guard delay > 0 else {
-            indicatorView.isHidden = true
-            return
-        }
-        let generation = transitionGeneration
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, self.transitionGeneration == generation, self.state == .expanded else { return }
-                self.indicatorView.isHidden = true
             }
         }
     }
@@ -340,11 +321,11 @@ final class NotchPanelController {
         case .collapsed:
             panel.setFrame(newLayout.collapsedFrame, display: true)
             container.frame = CGRect(origin: .zero, size: newLayout.collapsedFrame.size)
-            indicatorView.isHidden = false
+            indicatorView.setEarProgress(1, animated: false, duration: 0)
         case .expanded:
             panel.setFrame(newLayout.expandedFrame, display: true)
             container.frame = CGRect(origin: .zero, size: newLayout.expandedFrame.size)
-            indicatorView.isHidden = true
+            indicatorView.setEarProgress(0, animated: false, duration: 0)
         }
         hosting.frame = container.bounds
         indicatorView.frame = container.bounds
@@ -355,7 +336,7 @@ final class NotchPanelController {
         leftMetric = left
         rightMetric = right
         indicatorView.configure(layout: layout, leftMetric: left, rightMetric: right)
-        indicatorView.isHidden = (state == .expanded)
+        indicatorView.setEarProgress(state == .expanded ? 0 : 1, animated: false, duration: 0)
         Trace.log("indicators left=\(left.rawValue) right=\(right.rawValue) collapsed=\(NSStringFromRect(layout.collapsedFrame))")
     }
 
@@ -365,6 +346,8 @@ final class NotchPanelController {
     }
 
     var indicatorIsActive: Bool { indicatorView.isActive }
+    /// 耳朵伸出程度（1 = 收起态完全伸出，0 = 展开态收进刘海），供自检断言
+    var indicatorEarProgress: CGFloat { indicatorView.earProgress }
 
     /// 供 `--selftest` 使用：手动设定形变进度，用来导出中间帧检查"水滴"形状
     func setMorphProgressForTest(_ progress: CGFloat) {
@@ -379,8 +362,7 @@ final class NotchPanelController {
     var windowFrame: CGRect { panel.frame }
     var windowLevel: Int { panel.level.rawValue }
     var isWindowVisible: Bool { panel.isVisible }
-    /// 供自检断言指示条是否显示
-    var indicatorIsHidden: Bool { indicatorView.isHidden }
+
 
     /// 把面板内容离屏渲染成位图。用于 `--selftest` 做真实绘制验证
     /// （不需要屏幕录制权限，因为是进程内把视图层级画进位图）。

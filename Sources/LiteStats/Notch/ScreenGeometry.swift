@@ -144,14 +144,10 @@ struct PanelLayout: Equatable {
     }
 
     /// SwiftUI 绘制用：窗口内左上原点坐标下的"岛颈"矩形（有刘海时才有意义）。
-    /// 基于**展开**窗口坐标（SwiftUI 内容只在展开时构建，此时窗口 = 展开 frame）。
-    var tabRect: CGRect {
-        guard let notch = geometry.notchRect, !isFallback else { return .zero }
-        let frame = expandedFrame
-        let left = notch.minX - leftEarWidth - frame.minX
-        let right = notch.maxX + rightEarWidth - frame.minX
-        return CGRect(x: left, y: 0, width: max(0, right - left), height: bandHeight)
-    }
+    ///
+    /// **永远等于物理刘海宽度**：黑耳在展开过程中会收进刘海（`NotchIndicatorView.earProgress`），
+    /// 所以展开态的岛颈不带任何多余的黑耳 —— 展开后只剩"刘海 + 下方面板"。
+    var tabRect: CGRect { notchRect }
 
     /// 物理刘海的底边比菜单栏底边高出的量（本机 39 - 38 = 1pt）。
     /// 收起态的黑耳要和物理刘海"无缝连成一体"，所以它的底边必须贴齐**刘海**底边，

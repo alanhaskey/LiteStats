@@ -349,7 +349,8 @@ enum SelfTest {
         pump(0.25)
 
         check("指示条已激活", controller.indicatorIsActive)
-        check("收起态指示条可见", !controller.indicatorIsHidden)
+        check("收起态耳朵完全伸出（earProgress = 1）", controller.indicatorEarProgress > 0.99,
+              "\(controller.indicatorEarProgress)")
         check("指示条布局下窗口 frame 正确",
               nearlyEqual(controller.windowFrame, layout.collapsedFrame), rect(controller.windowFrame))
 
@@ -377,26 +378,76 @@ enum SelfTest {
 
         controller.forceState(.expanded, animated: false)
         pump(0.45)
-        check("展开后指示条自动隐藏（由岛颈接管）", controller.indicatorIsHidden)
-        // 展开态的岛颈必须**正好**等于「刘海 + 该侧黑耳」，不能凭空多出耳朵
-        let expectedTab = notch.width + (layout.leftEarActive ? layout.earWidth : 0)
-                                      + (layout.rightEarActive ? layout.earWidth : 0)
-        check("展开态岛颈宽度 = 刘海 + 有指标那侧的黑耳（不多露耳朵）",
-              abs(layout.tabRect.width - expectedTab) < 1.0,
-              "岛颈 \(layout.tabRect.width) vs 期望 \(expectedTab)")
+        check("展开后耳朵完全收进刘海（earProgress = 0）", controller.indicatorEarProgress < 0.01,
+              "\(controller.indicatorEarProgress)")
+        check("展开态岛颈宽度 = 物理刘海宽度（不多露任何耳朵）",
+              abs(layout.tabRect.width - notch.width) < 0.5,
+              "岛颈 \(layout.tabRect.width) vs 刘海 \(notch.width)")
+        if let bitmap = controller.renderContentBitmap() {
+            // 只检查顶部菜单栏带里的耳朵区域：面板体本身当然是有内容的，
+            // 而且它的阴影（alpha≈38）会落进这一带，所以用高阈值只认"实心黑耳"。
+            let scale = CGFloat(bitmap.pixelsWide) / max(layout.expandedFrame.width, 1)
+            // 探测区高度要停在菜单栏带内部：带的最底一行正好是面板体顶边的 1px 描边，
+            // 那属于正常内容，不是"残留的耳朵"。
+            let earBand = CGRect(x: 0, y: 0, width: layout.collapsedLeftEarRect.width,
+                                 height: max(4, layout.bandHeight - 4))
+            let ear = alphaBounds(bitmap, region: earBand, scale: scale, threshold: 200)
+            check("展开态耳朵区域不再绘制任何东西", ear == nil,
+                  ear.map { rect($0) } ?? "无内容")
+        }
         controller.stop()
 
-        // 只选一侧时：另一侧必须完全不画（折叠、展开都不能多出耳朵）
-        var oneSided = baseLayout
-        oneSided.earWidth = 88
-        oneSided.leftEarActive = false
-        oneSided.rightEarActive = true
-        let oneSidedTab = oneSided.tabRect.width
-        check("只选右侧时，岛颈只向右延伸",
-              abs(oneSidedTab - (notch.width + 88)) < 1.0, "\(oneSidedTab)")
-        check("只选右侧时，左侧收回（tab 左边 = 刘海左边）",
-              abs(oneSided.tabRect.minX - oneSided.notchRect.minX) < 1.0,
-              "tab.minX \(oneSided.tabRect.minX) vs 刘海 \(oneSided.notchRect.minX)")
+        verifyEarAnimation(geometry: geometry, layout: layout, service: service)
+    }
+
+    /// 耳朵伸缩动画验证：展开时左右耳必须**逐渐收进刘海**，收起时再长回来。
+    private static func verifyEarAnimation(geometry: ScreenGeometry, layout: PanelLayout,
+                                           service: MonitorService) {
+        let controller = NotchPanelController(layout: layout, service: service)
+        controller.hoverEnabled = false
+        controller.applyIndicators(left: .cpu, right: .cpu)
+        controller.start()
+        pump(0.3)
+
+        func renderedEarWidth() -> CGFloat {
+            guard let bitmap = controller.renderContentBitmap() else { return -1 }
+            let scale = CGFloat(bitmap.pixelsWide) / max(layout.collapsedFrame.width, 1)
+            // 只看左半侧（刘海左边那块），量它非透明像素的宽度
+            let probe = CGRect(x: 0, y: 0, width: layout.collapsedLeftEarRect.width,
+                               height: layout.collapsedFrame.height)
+            // 阈值必须高：展开态面板体的阴影（alpha≈38）会落进这一带
+            guard let bounds = alphaBounds(bitmap, region: probe, scale: scale, threshold: 200) else { return 0 }
+            return bounds.width
+        }
+
+        let full = renderedEarWidth()
+        check("收起态耳朵宽度 ≈ 配置值", abs(full - layout.earWidth) < 6,
+              "实测 \(full) vs 配置 \(layout.earWidth)")
+
+        // 展开：采样耳朵宽度，必须是"逐渐收进去"而不是瞬间消失
+        controller.forceState(.expanded, animated: true)
+        var shrinking: [CGFloat] = []
+        let start = Date()
+        var timeline: [String] = []
+        for _ in 0..<12 {
+            pump(0.04)
+            let w = renderedEarWidth()
+            shrinking.append(w)
+            timeline.append(String(format: "%.0fms:%d", Date().timeIntervalSince(start) * 1000, Int(w)))
+        }
+        info("耳朵收起时间线 \(timeline.joined(separator: " "))")
+        let intermediates = shrinking.filter { $0 > 4 && $0 < full - 6 }
+        check("展开时耳朵是逐渐收进去的（有中间宽度）", intermediates.count >= 2,
+              "中间宽度 \(intermediates.count) 个：\(intermediates.map { Int($0) })")
+        check("展开结束时耳朵已完全收起", (shrinking.last ?? 99) < 6, "末值 \(shrinking.last ?? -1)")
+
+        // 收起：耳朵要长回来
+        controller.forceState(.collapsed, animated: true)
+        pump(0.6)
+        let regrown = renderedEarWidth()
+        check("收起后耳朵长回原长度", abs(regrown - layout.earWidth) < 6,
+              "实测 \(regrown) vs 配置 \(layout.earWidth)")
+        controller.stop()
     }
 
     private static func pump(_ seconds: TimeInterval) {
@@ -511,14 +562,18 @@ enum SelfTest {
     }
 
     /// 非透明像素的包围盒（窗口内左上原点、点坐标）。用于判断"画出来的东西长到多大了"
-    private static func alphaBounds(_ bitmap: NSBitmapImageRep, scale: CGFloat,
+    private static func alphaBounds(_ bitmap: NSBitmapImageRep, region: CGRect? = nil, scale: CGFloat,
                                     threshold: UInt8 = 40) -> CGRect? {
         guard let data = bitmap.bitmapData, let index = alphaIndex(bitmap) else { return nil }
         let spp = max(bitmap.samplesPerPixel, 1)
+        let x0 = max(0, Int((region?.minX ?? 0) * scale))
+        let x1 = min(bitmap.pixelsWide, Int((region?.maxX ?? CGFloat(bitmap.pixelsWide)) * scale))
+        let y0 = max(0, Int((region?.minY ?? 0) * scale))
+        let y1 = min(bitmap.pixelsHigh, Int((region?.maxY ?? CGFloat(bitmap.pixelsHigh)) * scale))
         var minX = bitmap.pixelsWide, minY = bitmap.pixelsHigh, maxX = -1, maxY = -1
-        for y in 0..<bitmap.pixelsHigh {
+        for y in y0..<max(y0, y1) {
             let row = data + y * bitmap.bytesPerRow
-            for x in 0..<bitmap.pixelsWide where row[x * spp + index] >= threshold {
+            for x in x0..<max(x0, x1) where row[x * spp + index] >= threshold {
                 if x < minX { minX = x }
                 if x > maxX { maxX = x }
                 if y < minY { minY = y }
