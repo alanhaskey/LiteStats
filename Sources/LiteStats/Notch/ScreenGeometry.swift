@@ -159,6 +159,14 @@ struct PanelLayout: Equatable {
         return CGRect(x: left, y: 0, width: max(0, right - left), height: bandHeight)
     }
 
+    /// SwiftUI 绘制用：展开窗口内（左上原点）的**物理刘海**矩形。
+    /// 形变动画的起点就是它 —— progress = 0 时轮廓与物理刘海完全重合，所以"完全收入灵动岛"。
+    var notchRect: CGRect {
+        guard let notch = geometry.notchRect, !isFallback else { return .zero }
+        return CGRect(x: notch.minX - expandedFrame.minX, y: 0,
+                      width: notch.width, height: bandHeight)
+    }
+
     /// AppKit 指示条绘制用：**收起态**窗口内（左下原点，与容器视图一致）的左右黑耳矩形
     var collapsedLeftEarRect: CGRect {
         guard let notch = geometry.notchRect, !isFallback else { return .zero }

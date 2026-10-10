@@ -116,12 +116,12 @@ final class Preferences {
         // 默认 24pt：岛颈在物理刘海左右各露出一小截黑耳
         self.tabFlank = defaults.object(forKey: Key.tabFlank) != nil
             ? defaults.double(forKey: Key.tabFlank) : 24
+        // 默认完全不显示：收起态就是"什么都不画"，完全藏进物理刘海里（最隐蔽）。
+        // 想要常驻指标去「设置 → 刘海常驻指示条」里选。
         self.leftIndicator = defaults.string(forKey: Key.leftIndicator)
             .flatMap(IndicatorMetric.init(rawValue:)) ?? .none
-        // 默认在右侧常驻一个 CPU 占用：用户要求的"刘海两侧指示条"至少要能一眼看见，
-        // 不想要的话在设置里改成"不显示"即可。
         self.rightIndicator = defaults.string(forKey: Key.rightIndicator)
-            .flatMap(IndicatorMetric.init(rawValue:)) ?? .cpu
+            .flatMap(IndicatorMetric.init(rawValue:)) ?? .none
         self.showMenuBarItem = defaults.object(forKey: Key.showMenuBarItem) as? Bool ?? true
         self.launchAtLogin = defaults.bool(forKey: Key.launchAtLogin)
     }

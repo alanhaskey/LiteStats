@@ -139,6 +139,9 @@ enum SelfTest {
         // MARK: 4b. 常驻指示条（收起态画在刘海两侧的黑耳里）
         verifyIndicators(geometry: geometry, baseLayout: layout, service: service)
 
+        // MARK: 4c. 形变动画（水滴展开）
+        verifyIslandMorph(layout: layout, service: service)
+
         // MARK: 5. 采样数据（端到端）
 
         service.isPanelExpanded = true
@@ -207,6 +210,56 @@ enum SelfTest {
 
     // MARK: - 工具
 
+    /// 形变动画检查：progress=0 必须与物理刘海完全重合（这就是"完全收入灵动岛"），
+    /// progress=1 必须等于岛颈 ∪ 面板体，中间帧必须是"半途"且不越出窗口。
+    private static func verifyIslandMorph(layout: PanelLayout, service: MonitorService) {
+        guard !layout.isFallback, layout.notchRect.width > 1 else {
+            info("无刘海屏幕，跳过形变动画检查")
+            return
+        }
+        let notch = layout.notchRect
+        let target = layout.tabRect.union(layout.bodyRect)
+
+        func bounds(_ progress: CGFloat) -> CGRect {
+            IslandShape(progress: progress, notch: notch, tab: layout.tabRect, body: layout.bodyRect,
+                        bodyRadius: Theme.cornerRadius, tabRadius: Theme.tabCornerRadius)
+                .path(in: .zero).boundingRect
+        }
+
+        let start = bounds(0)
+        let end = bounds(1)
+        let mid = bounds(0.5)
+        info("形变轮廓：p=0 \(rect(start)) · p=0.5 \(rect(mid)) · p=1 \(rect(end))")
+
+        check("p=0 轮廓与物理刘海完全重合（收起态彻底隐形）",
+              start.width <= notch.width + 0.5 && start.height <= notch.height + 0.5
+              && abs(start.midX - notch.midX) < 0.5,
+              "\(rect(start)) vs 刘海 \(rect(notch))")
+        check("p=1 轮廓 = 岛颈 ∪ 面板体",
+              nearlyEqual(end, target, tolerance: 1.0), "\(rect(end)) vs \(rect(target))")
+        check("中间帧确实是半途（既不是刘海也不是成品）",
+              mid.height > notch.height * 0.2 && mid.height < layout.bodyRect.height,
+              "高度 \(mid.height) vs 目标 \(layout.bodyRect.height)")
+        check("形变过程全程不越出窗口",
+              mid.maxX <= layout.windowSize.width + 0.5 && mid.maxY <= layout.windowSize.height + 0.5,
+              rect(mid))
+
+        // 导出几张中间帧，肉眼确认"水滴"形状
+        let controller = NotchPanelController(layout: layout, service: service)
+        controller.hoverEnabled = false
+        controller.start()
+        controller.forceState(.expanded, animated: false)
+        pump(0.4)
+        for progress in [CGFloat(0.25), 0.5, 0.75] {
+            controller.setMorphProgressForTest(progress)
+            pump(0.12)
+            if let bitmap = controller.renderContentBitmap() {
+                dump(bitmap, suffix: "morph-\(Int(progress * 100))")
+            }
+        }
+        controller.stop()
+    }
+
     /// 常驻指示条验证：几何（黑耳放得下指示条、不越界/不覆盖刘海）+ 真实绘制 + 展开后自动隐藏
     private static func verifyIndicators(geometry: ScreenGeometry, baseLayout: PanelLayout,
                                          service: MonitorService) {
@@ -214,6 +267,21 @@ enum SelfTest {
             info("无刘海屏幕，跳过指示条验证（回退模式下用菜单栏下方胶囊）")
             return
         }
+
+        // 回归断言：没选任何指标时，收起态必须一个像素都不画。
+        // （之前 NotchIndicatorView 无条件按 collapsedLeftExtent 画黑耳，
+        //   导致"没配指示条"时刘海两边各多出 26pt 黑边，看起来像被撑宽了。）
+        let plain = NotchPanelController(layout: baseLayout, service: service)
+        plain.hoverEnabled = false
+        plain.applyIndicators(left: .none, right: .none)
+        plain.start()
+        pump(0.25)
+        check("不选指标时不画黑耳", !plain.indicatorIsActive)
+        if let bitmap = plain.renderContentBitmap() {
+            let maxA = maxAlpha(bitmap)
+            check("不选指标时收起态完全隐形（彻底藏进物理刘海）", maxA < 24, "最大 alpha=\(maxA)")
+        }
+        plain.stop()
 
         var layout = baseLayout
         layout.leftIndicatorWidth = IndicatorMetric.cpu.indicatorWidth

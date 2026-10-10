@@ -7,7 +7,12 @@ import SwiftUI
 @Observable
 final class PanelPresentation {
     var isExpanded: Bool = false
+    /// 视图树是否挂载。收起时**要等形变退回刘海之后**才卸载，
+    /// 这样收起方向也能看到"水滴收回去"而不是直接消失（收起后立刻卸载，回到低常驻内存）。
+    var isContentMounted: Bool = false
     var isPinned: Bool = false
+    /// 形变进度：0 = 轮廓与物理刘海完全重合（隐形），1 = 完整面板。由弹簧动画驱动。
+    var islandProgress: CGFloat = 0
     var layout: PanelLayout
 
     init(layout: PanelLayout) {
@@ -53,8 +58,10 @@ final class NotchPanelController {
     private let pollInterval: TimeInterval = 0.1
     private let expandDelay: TimeInterval = 0.10
     private let collapseDelay: TimeInterval = 0.35
-    private let expandAnimation: TimeInterval = 0.26
-    private let collapseAnimation: TimeInterval = 0.18
+    /// 展开形变：弹簧（略微回弹 = "水滴"落定感）
+    private let expandAnimation: TimeInterval = 0.46
+    /// 收起：稍微干脆一点
+    private let collapseAnimation: TimeInterval = 0.22
 
     init(layout: PanelLayout, service: MonitorService) {
         self.layout = layout
@@ -185,12 +192,17 @@ final class NotchPanelController {
             panel.setFrame(layout.expandedFrame, display: true)
             container.frame = CGRect(origin: .zero, size: layout.expandedFrame.size)
             hosting.frame = container.bounds
+            presentation.isContentMounted = true
             if animated {
-                withAnimation(.snappy(duration: expandAnimation, extraBounce: 0.06)) {
+                // 形变用弹簧：岛颈先横向铺开、面板体随后坠下，落定时略微回弹
+                // （阻尼 0.72 + 响应 0.46 ≈ 苹果那种"液体落定"的手感）
+                withAnimation(.spring(response: expandAnimation, dampingFraction: 0.72)) {
                     presentation.isExpanded = true
+                    presentation.islandProgress = 1
                 }
             } else {
                 presentation.isExpanded = true
+                presentation.islandProgress = 1
             }
             // 指示条要等面板动画长出来之后再隐藏，否则黑耳会先消失、留一小段空白
             hideIndicator(after: animated ? expandAnimation : 0)
@@ -199,7 +211,8 @@ final class NotchPanelController {
             // 收起时立刻把指示条放出来：面板淡出的这段时间由它填住黑耳区域
             showIndicator()
             if animated {
-                withAnimation(.easeIn(duration: collapseAnimation)) {
+                withAnimation(.easeInOut(duration: collapseAnimation)) {
+                    presentation.islandProgress = 0
                     presentation.isExpanded = false
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + collapseAnimation) { [weak self] in
@@ -209,10 +222,13 @@ final class NotchPanelController {
                         self.container.frame = CGRect(origin: .zero, size: self.layout.collapsedFrame.size)
                         self.hosting.frame = self.container.bounds
                         self.indicatorView.frame = self.container.bounds
+                        self.presentation.isContentMounted = false
                     }
                 }
             } else {
+                presentation.islandProgress = 0
                 presentation.isExpanded = false
+                presentation.isContentMounted = false
                 panel.setFrame(layout.collapsedFrame, display: true)
                 container.frame = CGRect(origin: .zero, size: layout.collapsedFrame.size)
                 hosting.frame = container.bounds
@@ -338,6 +354,11 @@ final class NotchPanelController {
     }
 
     var indicatorIsActive: Bool { indicatorView.isActive }
+
+    /// 供 `--selftest` 使用：手动设定形变进度，用来导出中间帧检查"水滴"形状
+    func setMorphProgressForTest(_ progress: CGFloat) {
+        presentation.islandProgress = progress
+    }
 
     /// 供 `--selftest` 使用：不依赖鼠标即可驱动状态机
     func forceState(_ newState: State, animated: Bool) {

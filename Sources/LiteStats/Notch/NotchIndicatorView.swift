@@ -56,8 +56,11 @@ final class NotchIndicatorView: NSView {
     func configure(layout: PanelLayout, leftMetric: IndicatorMetric, rightMetric: IndicatorMetric) {
         self.leftMetric = layout.isFallback ? .none : leftMetric
         self.rightMetric = layout.isFallback ? .none : rightMetric
-        self.leftEarWidth = layout.isFallback ? 0 : layout.collapsedLeftExtent
-        self.rightEarWidth = layout.isFallback ? 0 : layout.collapsedRightExtent
+        // ⚠️ 只有真的选了指标才画黑耳。
+        // 之前这里无条件用 collapsedLeftExtent（26pt），导致"没选任何指标"时刘海两边
+        // 仍然各多出一块黑边、看起来像被撑宽了 —— 与"完全收入灵动岛"的预期不符。
+        leftEarWidth = (layout.isFallback || self.leftMetric == .none) ? 0 : layout.collapsedLeftExtent
+        rightEarWidth = (layout.isFallback || self.rightMetric == .none) ? 0 : layout.collapsedRightExtent
         needsDisplay = true
     }
 
@@ -67,7 +70,7 @@ final class NotchIndicatorView: NSView {
         if !isHidden { needsDisplay = true }
     }
 
-    var isActive: Bool { leftMetric != .none || rightMetric != .none }
+    var isActive: Bool { leftEarWidth > 0 || rightEarWidth > 0 }
 
     // MARK: - 绘制
 
