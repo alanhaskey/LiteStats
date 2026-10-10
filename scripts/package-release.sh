@@ -28,12 +28,13 @@ ln -s /Applications "$STAGE/Applications"
 hdiutil create -volname "LiteStats ${VERSION}" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGE"
 
-shasum -a 256 "$ZIP" "$DMG" > "$SUMS"
+# 记相对路径：校验和在别的机器上用 `shasum -a 256 -c` 更顺手
+(cd "$ROOT" && shasum -a 256 "dist/$(basename "$ZIP")" "dist/$(basename "$DMG")") > "$SUMS"
 echo "==> 产物"
 for f in "$ZIP" "$DMG"; do
   printf '    %s  %s\n' "$(du -h "$f" | cut -f1)" "$(basename "$f")"
 done
-cat "$SUMS" | sed 's|^|    |' 
+sed 's|^|    |' "$SUMS"
 
 # 自检：解压后必须还能跑起来（确认发布件完整）
 CHECK="$(mktemp -d)"
