@@ -30,8 +30,10 @@ rm -rf "$STAGE"
 
 shasum -a 256 "$ZIP" "$DMG" > "$SUMS"
 echo "==> 产物"
-ls -lh "$ZIP" "$DMG" | awk '{print "   ", $5, $9}'
-cat "$SUMS"
+for f in "$ZIP" "$DMG"; do
+  printf '    %s  %s\n' "$(du -h "$f" | cut -f1)" "$(basename "$f")"
+done
+cat "$SUMS" | sed 's|^|    |' 
 
 # 自检：解压后必须还能跑起来（确认发布件完整）
 CHECK="$(mktemp -d)"
