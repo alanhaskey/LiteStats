@@ -354,6 +354,11 @@ final class NotchPanelController {
         presentation.islandProgress = progress
     }
 
+    /// 供 `--selftest` 使用：直接设定黑耳伸出程度
+    func setIndicatorEarProgressForTest(_ progress: CGFloat) {
+        indicatorView.setEarProgress(progress, animated: false, duration: 0)
+    }
+
     /// 供 `--selftest` 使用：不依赖鼠标即可驱动状态机
     func forceState(_ newState: State, animated: Bool) {
         apply(state: newState, animated: animated)

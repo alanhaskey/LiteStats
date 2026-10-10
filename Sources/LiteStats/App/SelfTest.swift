@@ -503,6 +503,24 @@ enum SelfTest {
         check("收起态耳朵宽度 ≈ 配置值", abs(full - layout.earWidth) < 6,
               "实测 \(full) vs 配置 \(layout.earWidth)")
 
+        // 量的不只是宽度，还有它相对刘海的位置：
+        // 内边缘必须钉在刘海边缘（固定），收缩时**外边缘**往里收。
+        func renderedEarBox() -> CGRect? {
+            guard let bitmap = controller.renderContentBitmap() else { return nil }
+            let frame = controller.windowFrame
+            let scale = CGFloat(bitmap.pixelsWide) / max(frame.width, 1)
+            let notchLeft = (geometry.notchRect?.minX ?? 0) - frame.minX
+            // 探测区要越过刘海边缘一点：黑耳内侧会故意多画 12pt 去填刘海的圆角
+            let probe = CGRect(x: max(0, notchLeft - layout.earWidth - 6), y: 0,
+                               width: layout.earWidth + 20, height: max(4, layout.bandHeight - 4))
+            return alphaBounds(bitmap, region: probe, scale: scale, threshold: 200)
+        }
+        if let box = renderedEarBox() {
+            let notchLeft = (geometry.notchRect?.minX ?? 0) - controller.windowFrame.minX
+            check("收起态左耳内边缘贴在刘海左边缘（锚点正确）",
+                  abs(box.maxX - notchLeft) < 4, "内边缘 \(Int(box.maxX)) vs 刘海 \(Int(notchLeft))")
+        }
+
         // 展开：采样耳朵宽度，必须是"逐渐收进去"而不是瞬间消失
         controller.forceState(.expanded, animated: true)
         var shrinking: [CGFloat] = []
@@ -518,6 +536,30 @@ enum SelfTest {
         let intermediates = shrinking.filter { $0 > 4 && $0 < full - 6 }
         check("展开时耳朵是逐渐收进去的（有中间宽度）", intermediates.count >= 2,
               "中间宽度 \(intermediates.count) 个：\(intermediates.map { Int($0) })")
+
+        // 关键回归断言：整个收缩过程中，内边缘必须始终贴住刘海边缘（不动），
+        // 否则黑耳是"朝屏幕外缩走"，方向就反了。
+        var innerEdges: [CGFloat] = []
+        controller.setIndicatorEarProgressForTest(1)
+        pump(0.15)
+        for progress in [CGFloat(1.0), 0.75, 0.5, 0.25] {
+            controller.setIndicatorEarProgressForTest(progress)
+            pump(0.06)
+            if let box = renderedEarBox() {
+                let notchLeft = (geometry.notchRect?.minX ?? 0) - controller.windowFrame.minX
+                innerEdges.append(box.maxX - notchLeft)
+            }
+        }
+        info("各进度下「内边缘 - 刘海边缘」的偏差：\(innerEdges.map { Int($0) })")
+        // 判据：1) 全程恒定（内边缘不移动）；2) 停在刘海边缘附近（允许故意越过 12pt 填圆角）。
+        // 若锚点错了（按窗口边缘起画），这里会看到偏差随时间从 ~12 一路涨到 earWidth。
+        let spread = (innerEdges.max() ?? 0) - (innerEdges.min() ?? 0)
+        check("收缩全程内边缘不移动（钉在刘海边缘，不会朝屏幕外缩）",
+              // 判定要点是"恒定"：锚点若错（按窗口边缘起画），偏差会随进度一路涨到耳宽。
+              // 允许一个小常量偏移 —— 那是黑耳刻意越过刘海边缘、去填刘海圆角的部分。
+              innerEdges.count >= 3 && spread <= 2
+              && innerEdges.allSatisfy { $0 > -4 && $0 < layout.earWidth * 0.35 },
+              "偏差 \(innerEdges.map { Int($0) })，波动 \(Int(spread))")
         check("展开结束时耳朵已完全收起", (shrinking.last ?? 99) < 6, "末值 \(shrinking.last ?? -1)")
 
         // 收起：耳朵要长回来

@@ -105,6 +105,10 @@ final class NotchIndicatorView: NSView {
     private var notchBottomInset: CGFloat = 0
     /// 物理刘海的底部圆角半径，黑耳内侧要沿同一个弧走，才能"连成一体"
     private var notchCornerRadius: CGFloat = 10
+    /// 物理刘海在屏幕上的**全局**矩形。黑耳要锚在刘海的边缘上：
+    /// 内边缘钉死、外边缘往里收，才是"被刘海吸进去"；
+    /// 若按窗口边缘起画，收缩时内边缘会往屏幕外跑，看起来就是方向反了。
+    private var notchGlobalRect: CGRect = .zero
     /// 菜单栏带高度：耳朵必须按这个算高度，**不能用 bounds.height**
     /// —— 窗口展开后 bounds 会变成 294pt，耳朵会被拉成一根长条。
     private var bandHeight: CGFloat = 39
@@ -126,6 +130,7 @@ final class NotchIndicatorView: NSView {
         notchBottomInset = layout.notchBottomInset
         notchCornerRadius = layout.notchCornerRadius
         bandHeight = layout.bandHeight
+        notchGlobalRect = layout.geometry.notchRect ?? .zero
         needsDisplay = true
     }
 
@@ -149,13 +154,22 @@ final class NotchIndicatorView: NSView {
         // 文字比黑耳更早淡出：黑耳收到一半时文字就没了，不会出现"半个字贴在刘海边上"
         let textAlpha = min(max((earProgress - 0.45) / 0.55, 0), 1)
 
+        // 用**当前窗口 frame** 把刘海的全局坐标换算成窗口内坐标：
+        // 展开动画一开始窗口就已经是展开尺寸了，不能拿"收起窗口"的坐标去摆。
+        let frame = window?.frame ?? .zero
+        let notchLeft = notchGlobalRect.minX - frame.minX
+        let notchRight = notchGlobalRect.maxX - frame.minX
+
         if leftEarWidth > 0.5 {
-            let rect = CGRect(x: 0, y: earY, width: leftEarWidth, height: earHeight)
+            // 内边缘固定在刘海左边缘，外边缘随进度往里收
+            let rect = CGRect(x: notchLeft - leftEarWidth, y: earY,
+                              width: leftEarWidth, height: earHeight)
             drawEar(rect, side: .left)
             drawMetric(leftMetric, in: rect, alpha: textAlpha)
         }
         if rightEarWidth > 0.5 {
-            let rect = CGRect(x: bounds.width - rightEarWidth, y: earY,
+            // 同理：内边缘固定在刘海右边缘
+            let rect = CGRect(x: notchRight, y: earY,
                               width: rightEarWidth, height: earHeight)
             drawEar(rect, side: .right)
             drawMetric(rightMetric, in: rect, alpha: textAlpha)
