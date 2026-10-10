@@ -375,12 +375,15 @@ struct HistoryView: View {
                     .foregroundStyle(Theme.subtleLabel)
                     .frame(height: 146, alignment: .top)
             } else {
-                VStack(spacing: 3) {
-                    ForEach(apps) { app in
-                        appRow(app)
+                // 可滚动：应用多的时候不再溢出窗口
+                ScrollView(.vertical, showsIndicators: true) {
+                    VStack(spacing: 3) {
+                        ForEach(apps) { app in
+                            appRow(app)
+                        }
                     }
                 }
-                .frame(height: 146, alignment: .top)
+                .frame(height: 146)
             }
         }
     }

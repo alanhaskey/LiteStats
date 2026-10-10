@@ -8,16 +8,14 @@ final class StatusItemController: NSObject {
     private let statusItem: NSStatusItem
     private let service: MonitorService
     private let prefs: Preferences
-    private weak var panelController: NotchPanelController?
 
     private let onOpenSettings: () -> Void
     private let onOpenHistory: () -> Void
 
-    init(service: MonitorService, prefs: Preferences, panelController: NotchPanelController,
+    init(service: MonitorService, prefs: Preferences,
          onOpenSettings: @escaping () -> Void, onOpenHistory: @escaping () -> Void) {
         self.service = service
         self.prefs = prefs
-        self.panelController = panelController
         self.onOpenSettings = onOpenSettings
         self.onOpenHistory = onOpenHistory
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)

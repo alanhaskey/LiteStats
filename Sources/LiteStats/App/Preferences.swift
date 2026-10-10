@@ -43,6 +43,28 @@ enum IndicatorMetric: String, CaseIterable, Identifiable, Sendable {
     var needsEar: Bool { self != .none }
 }
 
+/// 面板显示在哪块屏幕上
+enum DisplayMode: String, CaseIterable, Identifiable, Sendable {
+    /// 自动：优先有物理刘海的屏，否则主屏
+    case automatic
+    case main
+    /// 所有屏幕各挂一个
+    case all
+    /// 指定某一块（用 displayID 匹配，ID 变了就按名字回退）
+    case specific
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .automatic: return "自动"
+        case .main: return "主屏"
+        case .all: return "全部屏幕"
+        case .specific: return "指定屏幕"
+        }
+    }
+}
+
 /// 偏好设置（UserDefaults 持久化）。改动通过 `onChange` 即时生效。
 @MainActor
 @Observable
@@ -55,6 +77,9 @@ final class Preferences {
         static let leftIndicator = "leftIndicator"
         static let rightIndicator = "rightIndicator"
         static let launchAtLogin = "launchAtLogin"
+        static let displayMode = "displayMode"
+        static let specificDisplayID = "specificDisplayID"
+        static let specificDisplayName = "specificDisplayName"
     }
 
     private let defaults: UserDefaults
@@ -95,6 +120,19 @@ final class Preferences {
         didSet { defaults.set(launchAtLogin, forKey: Key.launchAtLogin) }
     }
 
+    /// 面板显示在哪块屏幕。多屏时可选"全部屏幕"或指定某一块。
+    var displayMode: DisplayMode {
+        didSet { defaults.set(displayMode.rawValue, forKey: Key.displayMode); onChange?() }
+    }
+    /// `.specific` 时目标屏幕的 displayID（0 = 还没选）
+    var specificDisplayID: UInt32 {
+        didSet { defaults.set(Int(specificDisplayID), forKey: Key.specificDisplayID); onChange?() }
+    }
+    /// 一起记名字：显示器 ID 在重新插拔后可能变，用名字兜底匹配
+    var specificDisplayName: String {
+        didSet { defaults.set(specificDisplayName, forKey: Key.specificDisplayName) }
+    }
+
     /// 任一影响布局/采样的改动后触发（由 AppDelegate 设置）
     var onChange: (() -> Void)?
 
@@ -117,5 +155,9 @@ final class Preferences {
             .flatMap(IndicatorMetric.init(rawValue:)) ?? .none
         self.showMenuBarItem = defaults.object(forKey: Key.showMenuBarItem) as? Bool ?? true
         self.launchAtLogin = defaults.bool(forKey: Key.launchAtLogin)
+        self.displayMode = defaults.string(forKey: Key.displayMode)
+            .flatMap(DisplayMode.init(rawValue:)) ?? .automatic
+        self.specificDisplayID = UInt32(defaults.integer(forKey: Key.specificDisplayID))
+        self.specificDisplayName = defaults.string(forKey: Key.specificDisplayName) ?? ""
     }
 }

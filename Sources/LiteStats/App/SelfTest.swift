@@ -40,7 +40,7 @@ enum SelfTest {
         }
         info("屏幕 frame=\(rect(geometry.screenFrame)) visible=\(rect(geometry.visibleFrame)) scale=\(geometry.backingScale)")
         info("菜单栏高度=\(geometry.menuBarHeight)")
-        info("刘海矩形=\(geometry.notchRect.map(rect) ?? "无（回退为菜单栏下方胶囊）")")
+        info("缺口矩形=\(rect(geometry.notchRect))（\(geometry.hasPhysicalNotch ? "物理刘海" : "合成缺口")）屏幕=\(geometry.name)")
         check("拿到有效屏幕", geometry.screenFrame.width > 100 && geometry.screenFrame.height > 100)
         check("菜单栏/刘海高度 > 0", geometry.menuBarHeight > 0, "\(geometry.menuBarHeight)")
 
@@ -61,7 +61,8 @@ enum SelfTest {
               abs(layout.windowSize.height - layout.bodyRect.maxY) < 0.5,
               "窗口 \(layout.windowSize.height) vs 内容 \(layout.bodyRect.maxY)")
 
-        if let notch = geometry.notchRect {
+        do {
+            let notch = geometry.notchRect
             check("展开 frame 顶边贴屏幕顶部", abs(layout.expandedFrame.maxY - geometry.screenTop) < 0.5)
             // 菜单栏带（本机 39pt）比物理刘海（38pt）高 1pt 属正常：岛颈要一直画到菜单栏底边，
             // 才能和下方的面板体无缝相接，否则中间会出现 1pt 缝隙。
@@ -77,6 +78,27 @@ enum SelfTest {
             check("岛颈完全覆盖刘海宽度", layout.tabRect.width >= notch.width,
                   "岛颈 \(layout.tabRect.width) vs 刘海 \(notch.width)")
         }
+
+        // MARK: 2b. 无刘海屏的"合成缺口"（外接屏 / 非刘海机型走这条）
+
+        let wide = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+        let synthetic = ScreenGeometry.syntheticNotch(screenFrame: wide, menuBarHeight: 39)
+        check("合成缺口：居中在屏幕顶部", abs(synthetic.midX - wide.midX) < 0.5
+              && abs(synthetic.maxY - wide.maxY) < 0.5, rect(synthetic))
+        check("合成缺口：与菜单栏同高且宽度合理",
+              abs(synthetic.height - 39) < 0.5 && synthetic.width >= 120 && synthetic.width <= 220,
+              "\(synthetic.width)×\(synthetic.height)")
+        let narrow = ScreenGeometry.syntheticNotch(screenFrame: CGRect(x: 0, y: 0, width: 600, height: 800),
+                                                   menuBarHeight: 24)
+        check("合成缺口：窄屏有最小宽度兜底", narrow.width >= 120, "\(narrow.width)")
+        let allGeometries = ScreenGeometry.all()
+        check("每块屏幕都能算出几何", allGeometries.count == NSScreen.screens.count,
+              "\(allGeometries.count) vs \(NSScreen.screens.count)")
+        check("每块屏幕都有可用的缺口矩形",
+              allGeometries.allSatisfy { $0.notchRect.width > 40 && $0.notchRect.height > 10 })
+        info("屏幕几何：" + allGeometries.map {
+            "\($0.name)[\($0.hasPhysicalNotch ? "刘海" : "合成") \(Int($0.notchRect.width))×\(Int($0.notchRect.height))]"
+        }.joined(separator: " "))
 
         // MARK: 3. 命中判定
 
@@ -231,8 +253,8 @@ enum SelfTest {
     /// 形变动画检查：progress=0 必须与物理刘海完全重合（这就是"完全收入灵动岛"），
     /// progress=1 必须等于岛颈 ∪ 面板体，中间帧必须是"半途"且不越出窗口。
     private static func verifyIslandMorph(layout: PanelLayout, service: MonitorService) {
-        guard !layout.isFallback, layout.notchRect.width > 1 else {
-            info("无刘海屏幕，跳过形变动画检查")
+        guard layout.notchRect.width > 1 else {
+            info("缺口宽度异常，跳过形变动画检查")
             return
         }
         let notch = layout.notchRect
@@ -434,8 +456,9 @@ enum SelfTest {
     /// 常驻指示条验证：几何（黑耳放得下指示条、不越界/不覆盖刘海）+ 真实绘制 + 展开后自动隐藏
     private static func verifyIndicators(geometry: ScreenGeometry, baseLayout: PanelLayout,
                                          service: MonitorService) {
-        guard geometry.hasNotch, let notch = geometry.notchRect else {
-            info("无刘海屏幕，跳过指示条验证（回退模式下用菜单栏下方胶囊）")
+        let notch = geometry.notchRect
+        guard notch.width > 1 else {
+            info("缺口宽度异常，跳过指示条验证")
             return
         }
 
@@ -565,14 +588,14 @@ enum SelfTest {
             guard let bitmap = controller.renderContentBitmap() else { return nil }
             let frame = controller.windowFrame
             let scale = CGFloat(bitmap.pixelsWide) / max(frame.width, 1)
-            let notchLeft = (geometry.notchRect?.minX ?? 0) - frame.minX
+            let notchLeft = geometry.notchRect.minX - frame.minX
             // 探测区要越过刘海边缘一点：黑耳内侧会故意多画 12pt 去填刘海的圆角
             let probe = CGRect(x: max(0, notchLeft - layout.earWidth - 6), y: 0,
                                width: layout.earWidth + 20, height: max(4, layout.bandHeight - 4))
             return alphaBounds(bitmap, region: probe, scale: scale, threshold: 200)
         }
         if let box = renderedEarBox() {
-            let notchLeft = (geometry.notchRect?.minX ?? 0) - controller.windowFrame.minX
+            let notchLeft = geometry.notchRect.minX - controller.windowFrame.minX
             check("收起态左耳内边缘贴在刘海左边缘（锚点正确）",
                   abs(box.maxX - notchLeft) < 4, "内边缘 \(Int(box.maxX)) vs 刘海 \(Int(notchLeft))")
         }
@@ -602,7 +625,7 @@ enum SelfTest {
             controller.setIndicatorEarProgressForTest(progress)
             pump(0.06)
             if let box = renderedEarBox() {
-                let notchLeft = (geometry.notchRect?.minX ?? 0) - controller.windowFrame.minX
+                let notchLeft = geometry.notchRect.minX - controller.windowFrame.minX
                 innerEdges.append(box.maxX - notchLeft)
             }
         }

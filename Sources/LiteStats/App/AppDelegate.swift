@@ -6,7 +6,11 @@ import LiteStatsCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var prefs: Preferences?
     private var service: MonitorService?
-    private var panelController: NotchPanelController?
+    /// 每块被选中的屏幕一个面板（多屏可"全部显示"）
+    private var panels: [UInt32: NotchPanelController] = [:]
+    /// 当前处于展开状态的面板所在屏幕（用来决定采样频率）
+    private var expandedDisplays: Set<UInt32> = []
+    private var screenObserver: NSObjectProtocol?
     private var statusItem: StatusItemController?
     private var settingsWindow: SettingsWindowController?
     private var historyWindow: HistoryWindowController?
@@ -32,7 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         Trace.enableIfRequested()
 
-        guard let geometry = ScreenGeometry.resolve() else {
+        guard let primary = ScreenGeometry.resolve() else {
             FileHandle.standardError.write(Data("LiteStats: 找不到可用屏幕，退出\n".utf8))
             NSApp.terminate(nil)
             return
@@ -45,52 +49,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applySamplingIntervals(prefs: prefs, service: service)
         self.service = service
 
-        let controller = NotchPanelController(
-            layout: Self.standardLayout(geometry: geometry, preferences: prefs), service: service)
-        controller.onStateChanged = { [weak service] state in
-            service?.isPanelExpanded = (state == .expanded)
-            service?.thermalIsVisible = Self.thermalIsVisible(state: state, prefs: prefs)
-        }
-        controller.applyIndicators(left: prefs.leftIndicator, right: prefs.rightIndicator)
-        self.panelController = controller
-
-        // 历史统计（本地存储；目录不可写时静默降级，不影响监控本身）
-        startHistory()
-
+        rebuildPanels()
 
         // 常驻指示条走回调（纯 AppKit 绘制），不经过 SwiftUI 的 @Observable 刷新
-        service.onSnapshot = { [weak controller, weak self] snapshot in
-            controller?.updateIndicator(snapshot)
-            self?.historyRecorder?.record(snapshot: snapshot, interval: service.interval)
+        service.onSnapshot = { [weak self] snapshot in
+            guard let self else { return }
+            for panel in self.panels.values { panel.updateIndicator(snapshot) }
+            self.historyRecorder?.record(snapshot: snapshot, interval: service.interval)
         }
-        // 初始：没人看温度就先按低频刷新
-        service.thermalIsVisible = Self.thermalIsVisible(state: .collapsed, prefs: prefs)
         // 设置界面里改任何一项都即时生效
         prefs.onChange = { [weak self] in self?.applyPreferences() }
+        // 屏幕增删/换位置：重建全部面板
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.rebuildPanels() }
+            }
 
-        controller.start()
         service.start()
 
         if prefs.showMenuBarItem {
             statusItem = StatusItemController(service: service, prefs: prefs,
-                                              panelController: controller,
                                               onOpenSettings: { [weak self] in self?.showSettings() },
                                               onOpenHistory: { [weak self] in self?.showHistory() })
         }
 
-        NSLog("LiteStats 已启动：刘海=%@ 屏幕=%@ 指示条(左=%@ 右=%@) 耳长=%.0fpt",
-              NSStringFromRect(geometry.notchRect ?? .zero), NSStringFromRect(geometry.screenFrame),
-              prefs.leftIndicator.rawValue, prefs.rightIndicator.rawValue, prefs.earWidth)
+        NSLog("LiteStats 已启动：面板数=%d 显示模式=%@ 缺口=%@（%@）指示条(左=%@ 右=%@)",
+              panels.count, prefs.displayMode.rawValue,
+              NSStringFromRect(primary.notchRect),
+              primary.hasPhysicalNotch ? "物理刘海" : "合成缺口",
+              prefs.leftIndicator.rawValue, prefs.rightIndicator.rawValue)
 
         if Trace.isEnabled {
             // 给端到端测试用的 CG 坐标（左上原点）：刘海中心
-            let appKitY = geometry.screenTop - geometry.menuBarHeight / 2
-            Trace.log(String(format: "notchCenterCG %.1f %.1f", geometry.anchorX,
-                             geometry.screenFrame.maxY - appKitY))
+            // 每块面板各一行，方便端到端脚本驱动任意一块屏
+            for panel in panels.values {
+                let geometry = panel.layout.geometry
+                let appKitY = geometry.screenTop - geometry.menuBarHeight / 2
+                Trace.log(String(format: "notchCenterCG %.1f %.1f display=%u %@",
+                                 geometry.anchorX, geometry.screenFrame.maxY - appKitY,
+                                 geometry.displayID,
+                                 geometry.hasPhysicalNotch ? "physical" : "synthetic"))
+            }
         }
 
-        if let seconds = SelfBenchmark.requestedSeconds() {
-            SelfBenchmark.run(totalSeconds: seconds, service: service, controller: controller)
+        if let seconds = SelfBenchmark.requestedSeconds(), let first = panels.values.first {
+            SelfBenchmark.run(totalSeconds: seconds, service: service, controller: first)
         }
     }
 
@@ -102,18 +106,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             || prefs.rightIndicator == .temperature || prefs.rightIndicator == .fan
     }
 
-    /// 设置项变化：重算布局 + 采样间隔 + 菜单栏图标
+    /// 设置项变化：重算布局 + 采样间隔 + 菜单栏图标 + 显隐目标屏幕
     private func applyPreferences() {
-        guard let prefs, let service, let controller = panelController else { return }
-        var layout = controller.layout
-        layout.earWidth = CGFloat(prefs.earWidth)
-        layout.leftEarActive = prefs.leftIndicator.needsEar
-        layout.rightEarActive = prefs.rightIndicator.needsEar
-        controller.applyLayout(layout)
-        controller.applyIndicators(left: prefs.leftIndicator, right: prefs.rightIndicator)
+        guard let prefs, let service else { return }
+        rebuildPanels()
         applySamplingIntervals(prefs: prefs, service: service)
-        service.thermalIsVisible = Self.thermalIsVisible(state: controller.state, prefs: prefs)
+        updateServiceFlags()
         updateStatusItemVisibility()
+    }
+
+    // MARK: - 面板与屏幕
+
+    /// 按设置决定面板挂在哪块（或哪些）屏幕上，并同步已有面板。
+    private func rebuildPanels() {
+        guard let prefs, let service else { return }
+        let geometries = targetGeometries(prefs: prefs)
+        let wanted = Set(geometries.map(\.displayID))
+
+        for (id, panel) in panels where !wanted.contains(id) {
+            panel.stop()
+            panels.removeValue(forKey: id)
+            expandedDisplays.remove(id)
+        }
+
+        for geometry in geometries {
+            let layout = Self.standardLayout(geometry: geometry, preferences: prefs)
+            if let existing = panels[geometry.displayID] {
+                existing.applyLayout(layout)
+                existing.applyIndicators(left: prefs.leftIndicator, right: prefs.rightIndicator)
+            } else {
+                let panel = NotchPanelController(layout: layout, service: service)
+                let displayID = geometry.displayID
+                panel.onStateChanged = { [weak self] state in
+                    MainActor.assumeIsolated { self?.panelStateChanged(displayID: displayID, state: state) }
+                }
+                panel.applyIndicators(left: prefs.leftIndicator, right: prefs.rightIndicator)
+                panel.start()
+                panel.updateIndicator(service.snapshot)
+                panels[displayID] = panel
+            }
+        }
+        updateServiceFlags()
+    }
+
+    private func panelStateChanged(displayID: UInt32, state: NotchPanelController.State) {
+        if state == .expanded {
+            expandedDisplays.insert(displayID)
+        } else {
+            expandedDisplays.remove(displayID)
+        }
+        updateServiceFlags()
+    }
+
+    /// 展开态 / 是否有人看温度，决定采样频率与温度刷新频率（任一面板展开即算）
+    private func updateServiceFlags() {
+        guard let service, let prefs else { return }
+        let anyExpanded = !expandedDisplays.isEmpty
+        service.isPanelExpanded = anyExpanded
+        service.thermalIsVisible = anyExpanded || Self.thermalIsVisible(state: .collapsed, prefs: prefs)
+    }
+
+    /// 按设置挑出要挂面板的屏幕
+    private func targetGeometries(prefs: Preferences) -> [ScreenGeometry] {
+        let screens = NSScreen.screens
+        let previous = panels.mapValues { $0.layout.geometry }
+        func pick(_ screen: NSScreen) -> ScreenGeometry {
+            ScreenGeometry.geometry(for: screen, previous: previous[ScreenGeometry.displayID(of: screen)])
+        }
+
+        switch prefs.displayMode {
+        case .all:
+            return ScreenGeometry.all(screens: screens, previous: previous)
+        case .main:
+            guard let main = NSScreen.main else { return [] }
+            return [pick(main)]
+        case .specific:
+            let byID = screens.first { ScreenGeometry.displayID(of: $0) == prefs.specificDisplayID }
+            let byName = prefs.specificDisplayName.isEmpty ? nil
+                : screens.first { $0.localizedName == prefs.specificDisplayName }
+            if let target = byID ?? byName { return [pick(target)] }
+            // 指定的屏幕不在了：退回自动
+            return ScreenGeometry.resolve(screens: screens, main: NSScreen.main,
+                                          previous: panels.values.first?.layout.geometry).map { [$0] } ?? []
+        case .automatic:
+            return ScreenGeometry.resolve(screens: screens, main: NSScreen.main,
+                                          previous: panels.values.first?.layout.geometry).map { [$0] } ?? []
+        }
     }
 
     /// 收起态如果有人看指示条，刷新就得跟手一点（默认 2s → 1s）
@@ -123,10 +201,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusItemVisibility() {
-        guard let prefs, let service, let controller = panelController else { return }
+        guard let prefs, let service else { return }
         if prefs.showMenuBarItem, statusItem == nil {
             statusItem = StatusItemController(service: service, prefs: prefs,
-                                              panelController: controller,
                                               onOpenSettings: { [weak self] in self?.showSettings() },
                                               onOpenHistory: { [weak self] in self?.showHistory() })
         } else if !prefs.showMenuBarItem {
@@ -191,6 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         historyRecorder?.stop()
         service?.stop()
-        panelController?.stop()
+        for panel in panels.values { panel.stop() }
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
     }
 }

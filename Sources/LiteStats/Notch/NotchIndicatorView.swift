@@ -120,13 +120,13 @@ final class NotchIndicatorView: NSView {
 
     /// 布局或配置变化时调用
     func configure(layout: PanelLayout, leftMetric: IndicatorMetric, rightMetric: IndicatorMetric) {
-        self.leftMetric = layout.isFallback ? .none : leftMetric
-        self.rightMetric = layout.isFallback ? .none : rightMetric
+        self.leftMetric = leftMetric
+        self.rightMetric = rightMetric
         // ⚠️ 只有真的选了指标才画黑耳。
         // 之前这里无条件用 collapsedLeftExtent（26pt），导致"没选任何指标"时刘海两边
         // 仍然各多出一块黑边、看起来像被撑宽了 —— 与"完全收入灵动岛"的预期不符。
-        configuredLeftEarWidth = (layout.isFallback || self.leftMetric == .none) ? 0 : layout.collapsedLeftExtent
-        configuredRightEarWidth = (layout.isFallback || self.rightMetric == .none) ? 0 : layout.collapsedRightExtent
+        configuredLeftEarWidth = self.leftMetric == .none ? 0 : layout.collapsedLeftExtent
+        configuredRightEarWidth = self.rightMetric == .none ? 0 : layout.collapsedRightExtent
         notchBottomInset = layout.notchBottomInset
         notchCornerRadius = layout.notchCornerRadius
         bandHeight = layout.bandHeight

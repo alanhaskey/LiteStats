@@ -121,16 +121,6 @@ struct PanelRootView: View {
         let expanded = presentation.isContentMounted
 
         ZStack(alignment: .topLeading) {
-            if layout.isFallback, !expanded {
-                // 无刘海屏：收起时是一个可见的小胶囊（否则完全没有可发现性）。
-                // 用 GeometryReader 贴住窗口实际尺寸 —— 收起态窗口只有胶囊那么大，
-                // 而根视图是按展开尺寸算的，直接摆会被居中、画到窗口外面去。
-                GeometryReader { geo in
-                    fallbackPill(layout: layout)
-                        .frame(width: geo.size.width, height: geo.size.height)
-                }
-            }
-
             // 关键：收起时**不构建**视图树（而不是把它设成 opacity 0）。
             // 实测：只要内容存在，SwiftUI 就会初始化渲染管线，物理占用从 ~19 MB 涨到 ~100 MB。
             if expanded {
@@ -181,20 +171,5 @@ struct PanelRootView: View {
             .clipShape(shape)
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
-    }
-
-    @ViewBuilder
-    private func fallbackPill(layout: PanelLayout) -> some View {
-        let cpu = service.snapshot?.cpu.total ?? 0
-        HStack(spacing: 5) {
-            Circle().fill(Theme.cpu(cpu)).frame(width: 6, height: 6)
-            Text("CPU \(Fmt.percent(cpu, decimals: 0))")
-                .font(.system(size: 11, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(.white)
-        }
-        .frame(width: layout.fallbackPillSize.width, height: layout.fallbackPillSize.height)
-        .background(Capsule().fill(Color.black.opacity(0.72)))
-        .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
     }
 }

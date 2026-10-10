@@ -22,6 +22,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             indicatorSection
+            displaySection
             samplingSection
             historySection
             generalSection
@@ -68,6 +69,56 @@ struct SettingsView: View {
                     .frame(height: 30)
             }
         }
+    }
+
+    // MARK: - 显示位置
+
+    private var displaySection: some View {
+        Section("显示位置") {
+            Picker("显示在", selection: $preferences.displayMode) {
+                ForEach(DisplayMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .onChange(of: preferences.displayMode) { _, mode in
+                // 切到"指定屏幕"但还没选过：默认选第一块，避免出现空选择
+                if mode == .specific, preferences.specificDisplayID == 0,
+                   let first = Self.availableScreens.first {
+                    selectSpecific(first.id)
+                }
+            }
+            if preferences.displayMode == .specific {
+                Picker("屏幕", selection: specificDisplayBinding) {
+                    ForEach(Self.availableScreens, id: \.id) { screen in
+                        Text(screen.label).tag(screen.id)
+                    }
+                }
+            }
+        }
+    }
+
+    private struct ScreenOption: Identifiable, Hashable {
+        let id: UInt32
+        let label: String
+    }
+
+    private static var availableScreens: [ScreenOption] {
+        NSScreen.screens.map { screen in
+            let id = ScreenGeometry.displayID(of: screen)
+            let notch = ScreenGeometry.detectNotch(of: screen) != nil ? "（有刘海）" : ""
+            return ScreenOption(id: id, label: screen.localizedName + notch)
+        }
+    }
+
+    private var specificDisplayBinding: Binding<UInt32> {
+        Binding(get: { preferences.specificDisplayID },
+                set: { selectSpecific($0) })
+    }
+
+    private func selectSpecific(_ id: UInt32) {
+        preferences.specificDisplayID = id
+        preferences.specificDisplayName = NSScreen.screens
+            .first { ScreenGeometry.displayID(of: $0) == id }?.localizedName ?? ""
     }
 
     // MARK: - 采样
@@ -160,7 +211,7 @@ private struct NotchPreview: View {
 
     var body: some View {
         GeometryReader { geo in
-            let notchWidth = ScreenGeometry.resolve()?.notchRect?.width ?? 220
+            let notchWidth = ScreenGeometry.resolve()?.notchRect.width ?? 220
             let leftEar: CGFloat = left.needsEar ? earWidth : 0
             let rightEar: CGFloat = right.needsEar ? earWidth : 0
             let total = notchWidth + leftEar + rightEar

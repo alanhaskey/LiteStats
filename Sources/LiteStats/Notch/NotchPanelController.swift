@@ -85,9 +85,6 @@ final class NotchPanelController {
         panel.contentView = container
 
         installClickMonitor()
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(screenParametersChanged),
-            name: NSApplication.didChangeScreenParametersNotification, object: nil)
     }
 
     // MARK: - 生命周期
@@ -298,18 +295,6 @@ final class NotchPanelController {
     }
 
     // MARK: - 屏幕变化
-
-    @objc private func screenParametersChanged() {
-        rebuildLayout()
-    }
-
-    /// 重新计算屏幕几何并应用当前状态的 frame。
-    func rebuildLayout() {
-        guard let geometry = ScreenGeometry.resolve(previous: layout.geometry) else { return }
-        var newLayout = layout
-        newLayout.geometry = geometry
-        applyLayout(newLayout)
-    }
 
     /// 应用新布局（设置界面改动、屏幕变化都走这里）：重算窗口 frame + 重配指示条。
     func applyLayout(_ newLayout: PanelLayout) {
