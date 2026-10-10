@@ -25,6 +25,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/LiteStats" "$APP/Contents/MacOS/LiteStats"
 cp "$LITESTATS_ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+if [[ -f "$LITESTATS_ROOT/Resources/AppIcon.icns" ]]; then
+  cp "$LITESTATS_ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+fi
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 echo "==> 临时签名（ad-hoc）"
