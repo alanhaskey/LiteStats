@@ -199,6 +199,10 @@ enum SelfTest {
 
         verifySettingsWindow(service: dataService)
 
+        // MARK: 8. 历史统计
+
+        verifyHistory(service: dataService)
+
         print("=== 自检结果：\(checkCount - failures.count)/\(checkCount) 通过 ===")
         if !failures.isEmpty {
             print("失败项：\(failures.joined(separator: "、"))")
@@ -294,6 +298,81 @@ enum SelfTest {
               "中间帧 \(intermediates.count) 个：\(intermediates.map { Int($0) })")
         growing.stop()
         animated.stop()
+    }
+
+    /// 历史统计：临时目录里的端到端（灌数据 → 汇总非空 → 清空归零 → 窗口能渲染）
+    private static func verifyHistory(service: MonitorService) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("litestats-selftest-history-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        guard let store = try? HistoryStore(directory: directory) else {
+            check("历史存储可在指定目录创建", false, directory.path)
+            return
+        }
+        check("历史存储可在指定目录创建", true, directory.path)
+        check("初始时无历史数据", store.storageBytes == 0, "\(store.storageBytes) 字节")
+
+        // 灌入真实快照（每拍记为 1 秒；store 内部按分钟聚合）
+        let monitor = SystemMonitor()
+        _ = monitor.sample()
+        for _ in 0..<40 {
+            let snapshot = monitor.sample()
+            store.record(snapshot: snapshot, interval: 1)
+        }
+        // 也灌一点按应用的数据，顺便验证聚合路径
+        store.record(appSamples: [
+            AppUsageSample(name: "Safari", path: "/Applications/Safari.app", cpuSeconds: 1.2,
+                           memoryBytes: 400 * 1_048_576, networkIn: 5_000_000, networkOut: 200_000),
+            AppUsageSample(name: "Xcode", path: "/Applications/Xcode.app", cpuSeconds: 8.5,
+                           memoryBytes: 2_000 * 1_048_576, networkIn: 100_000, networkOut: 50_000),
+        ], interval: 5)
+        store.flush()
+
+        let summary = store.today()
+        info(String(format: "历史汇总：网络 ↓%@ ↑%@ CPU %.2f 核·秒 应用 %d 个 存储 %.1f KB",
+                    Fmt.bytes(summary.networkIn), Fmt.bytes(summary.networkOut),
+                    summary.cpuSeconds, summary.apps.count, Double(store.storageBytes) / 1024))
+        check("历史汇总记录了 CPU 时间", summary.cpuSeconds > 0, "\(summary.cpuSeconds)")
+        check("历史汇总有应用维度数据", !summary.apps.isEmpty, "\(summary.apps.count) 个")
+        check("应用排行按影响降序（Xcode 应排在 Safari 前）",
+              summary.apps.first?.name == "Xcode", summary.apps.map(\.name).joined(separator: ","))
+
+        // 窗口能渲染（无法点鼠标，只能离屏渲染确认它真的画出来了）
+        let controller = HistoryWindowController(store: store)
+        controller.present()
+        pump(0.8)
+        if let content = controller.window?.contentView,
+           let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+            content.cacheDisplay(in: content.bounds, to: bitmap)
+            let scale = CGFloat(bitmap.pixelsWide) / max(content.bounds.width, 1)
+            let coverage = alphaCoverage(bitmap, region: CGRect(origin: .zero, size: content.bounds.size),
+                                        scale: scale, threshold: 128)
+            // 注意：窗口内容视图本身是"透明底"（底色由 NSWindow 画），
+            // 所以覆盖率天然很低，这里改为"有内容 + 内容铺满大半个窗口"。
+            let ink = alphaBounds(bitmap, scale: scale, threshold: 40)
+            info(String(format: "历史窗口离屏渲染 %d×%dpx 着色覆盖率 %.1f%% 内容范围 %@",
+                        bitmap.pixelsWide, bitmap.pixelsHigh, coverage * 100,
+                        ink.map { rect($0) } ?? "无"))
+            check("历史统计窗口渲染出内容并铺满窗口",
+                  coverage > 0.04 && (ink?.width ?? 0) > content.bounds.width * 0.7
+                  && (ink?.height ?? 0) > content.bounds.height * 0.7,
+                  "着色 \(String(format: "%.1f%%", coverage * 100)) 范围 \(ink.map { rect($0) } ?? "无")")
+            dump(bitmap, suffix: "history")
+        } else {
+            check("历史统计窗口离屏渲染可用", false, "contentView/bitmap 为 nil")
+        }
+        controller.close()
+        pump(0.2)
+
+        // 清空
+        do {
+            try store.resetAll()
+            check("清空后存储归零", store.storageBytes == 0, "\(store.storageBytes) 字节")
+            check("清空后汇总为空", store.today().cpuSeconds == 0 && store.today().apps.isEmpty)
+        } catch {
+            check("清空历史数据", false, String(describing: error))
+        }
     }
 
     /// 常驻指示条验证：几何（黑耳放得下指示条、不越界/不覆盖刘海）+ 真实绘制 + 展开后自动隐藏
@@ -488,7 +567,8 @@ enum SelfTest {
         preferences.rightIndicator = .temperature
         preferences.earWidth = 104
 
-        let controller = SettingsWindowController(preferences: preferences, service: service)
+        let controller = SettingsWindowController(preferences: preferences, service: service,
+                                                  onOpenHistory: {})
         controller.present()
         pump(0.8)
 

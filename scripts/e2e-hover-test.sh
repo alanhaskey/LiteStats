@@ -41,7 +41,8 @@ if ! kill -0 "$APP_PID" 2>/dev/null; then
   exit 1
 fi
 
-NOTCH_POINT="$(grep -o 'notchCenterCG [0-9. ]*' "$TRACE" | tail -1 | cut -d' ' -f2,3 || true)"
+# 坐标可能是负数（外接显示器时内置刘海屏的原点不是 0,0），所以正则要允许负号
+NOTCH_POINT="$(grep -o 'notchCenterCG -\?[0-9.]* -\?[0-9.]*' "$TRACE" | tail -1 | cut -d' ' -f2,3 || true)"
 if [[ -z "$NOTCH_POINT" ]]; then
   echo "FAIL: 日志里没有 notchCenterCG（该屏幕可能没有刘海，回退模式下不适用本测试）" >&2
   cat "$TRACE"

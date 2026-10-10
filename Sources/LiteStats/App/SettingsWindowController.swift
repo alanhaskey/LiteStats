@@ -11,7 +11,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// 关闭时回调（AppDelegate 用它把引用置空，释放 SwiftUI 图）
     var onClose: (() -> Void)?
 
-    init(preferences: Preferences, service: MonitorService) {
+    init(preferences: Preferences, service: MonitorService, onOpenHistory: @escaping () -> Void) {
         self.preferences = preferences
         self.service = service
 
@@ -26,7 +26,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
 
         window.delegate = self
-        let host = NSHostingView(rootView: SettingsView(preferences: preferences, service: service))
+        let host = NSHostingView(rootView: SettingsView(preferences: preferences,
+                                                        service: service,
+                                                        onOpenHistory: onOpenHistory))
         host.sizingOptions = []
         host.frame = window.contentView?.bounds ?? .zero
         host.autoresizingMask = [.width, .height]

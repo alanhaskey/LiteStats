@@ -18,6 +18,10 @@ enum Theme {
     static let subtle = Color.white.opacity(0.38)
     static let hairline = Color.white.opacity(0.10)
 
+    /// 普通窗口里的次要文字色。不用 `.secondary`：语义色依赖背景 vibrancy，
+    /// 在没有底色的视图里（或离屏渲染时）会整段画不出来。
+    static let subtleLabel = Color.primary.opacity(0.55)
+
     /// 面板底色：**纯黑**。物理刘海在屏幕上是纯黑，只有用纯黑，展开时的岛颈/黑耳
     /// 才能和它无缝连成一体；略微偏灰的一点点色差都会让两者看起来是分开的两块。
     /// 面板体靠 1px 高光和阴影保持"卡片感"。不用毛玻璃材质——省 ~90 MB 物理占用。

@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: NotchPanelController?
     private var statusItem: StatusItemController?
     private var settingsWindow: SettingsWindowController?
+    private var historyWindow: HistoryWindowController?
+    private var historyStore: HistoryStore?
+    private var historyRecorder: HistoryRecorder?
 
     /// 默认布局（尺寸取自 Theme，保证窗口 frame 与 SwiftUI 内容一致）
     static func standardLayout(geometry: ScreenGeometry,
@@ -51,9 +54,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.applyIndicators(left: prefs.leftIndicator, right: prefs.rightIndicator)
         self.panelController = controller
 
+        // 历史统计（本地存储；目录不可写时静默降级，不影响监控本身）
+        startHistory()
+
+
         // 常驻指示条走回调（纯 AppKit 绘制），不经过 SwiftUI 的 @Observable 刷新
-        service.onSnapshot = { [weak controller] snapshot in
+        service.onSnapshot = { [weak controller, weak self] snapshot in
             controller?.updateIndicator(snapshot)
+            self?.historyRecorder?.record(snapshot: snapshot, interval: service.interval)
         }
         // 初始：没人看温度就先按低频刷新
         service.thermalIsVisible = Self.thermalIsVisible(state: .collapsed, prefs: prefs)
@@ -131,7 +139,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             existing.present()
             return
         }
-        let controller = SettingsWindowController(preferences: prefs, service: service)
+        let controller = SettingsWindowController(preferences: prefs, service: service,
+                                                  onOpenHistory: { [weak self] in self?.showHistory() })
         controller.onClose = { [weak self] in
             // 关闭即释放 SwiftUI 图，回到低常驻内存
             self?.settingsWindow = nil
@@ -140,7 +149,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.present()
     }
 
+    // MARK: - 历史统计
+
+    private func startHistory() {
+        do {
+            // 允许用环境变量指定存储目录（测试/沙箱环境用；正常运行时走默认的
+            // ~/Library/Application Support/LiteStats）
+            let override = ProcessInfo.processInfo.environment["LITESTATS_HISTORY_DIR"]
+                .map { URL(fileURLWithPath: $0) }
+            let store = try HistoryStore(directory: override)
+            let recorder = HistoryRecorder(store: store)
+            recorder.start()
+            historyStore = store
+            historyRecorder = recorder
+            NSLog("LiteStats 历史统计已启用：%@", store.storagePath)
+        } catch {
+            NSLog("LiteStats 历史统计不可用（不影响监控）：%@", String(describing: error))
+        }
+    }
+
+    private func showHistory() {
+        guard let store = historyStore else {
+            let alert = NSAlert()
+            alert.messageText = "历史统计不可用"
+            alert.informativeText = "无法创建本地存储目录。"
+            alert.runModal()
+            return
+        }
+        if let existing = historyWindow {
+            existing.present()
+            return
+        }
+        let controller = HistoryWindowController(store: store)
+        controller.onClose = { [weak self] in self?.historyWindow = nil }
+        historyWindow = controller
+        controller.present()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        historyRecorder?.stop()
         service?.stop()
         panelController?.stop()
     }

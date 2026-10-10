@@ -65,6 +65,8 @@ enum ProbeRunner {
     private static let maxSamples = 200_000
 
     static func run(_ options: ProbeOptions) -> Int32 {
+        if options.historyDemo { return HistoryDemo.run(options) }
+
         let monitor = SystemMonitor()
         let reporter = ProbeReporter(json: options.json)
         reporter.emitHeader(options: options, coreCount: monitor.coreCount)

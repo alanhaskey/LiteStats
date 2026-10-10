@@ -4,3 +4,4 @@
 dist/
 *.app
 .DS_Store
+.build-history/

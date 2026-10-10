@@ -6,6 +6,8 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var preferences: Preferences
     let service: MonitorService
+    /// 打开历史统计窗口（由 AppDelegate 提供）
+    let onOpenHistory: () -> Void
 
     @State private var launchNote: String = ""
     @State private var costText: String = "测量中…"
@@ -21,6 +23,7 @@ struct SettingsView: View {
         Form {
             indicatorSection
             samplingSection
+            historySection
             generalSection
             aboutSection
         }
@@ -122,6 +125,24 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: - 历史统计
+
+    private var historySection: some View {
+        Section("历史统计") {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("记录网络流量、CPU/GPU/内存与应用占用")
+                        .font(.system(size: 12))
+                    Text("本地保存（分钟明细 7 天、小时 180 天、天级永久），可随时清空。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("打开历史统计…") { onOpenHistory() }
+            }
         }
     }
 
