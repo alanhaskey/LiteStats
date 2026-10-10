@@ -105,8 +105,10 @@ struct SettingsView: View {
     private static var availableScreens: [ScreenOption] {
         NSScreen.screens.map { screen in
             let id = ScreenGeometry.displayID(of: screen)
-            let notch = ScreenGeometry.detectNotch(of: screen) != nil ? "（有刘海）" : ""
-            return ScreenOption(id: id, label: screen.localizedName + notch)
+            var marks: [String] = []
+            if screen == NSScreen.main { marks.append("主屏") }
+            marks.append(ScreenGeometry.detectNotch(of: screen) != nil ? "有刘海" : "无刘海")
+            return ScreenOption(id: id, label: "\(screen.localizedName)（\(marks.joined(separator: "·"))）")
         }
     }
 

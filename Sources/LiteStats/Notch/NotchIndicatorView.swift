@@ -109,6 +109,9 @@ final class NotchIndicatorView: NSView {
     /// 内边缘钉死、外边缘往里收，才是"被刘海吸进去"；
     /// 若按窗口边缘起画，收缩时内边缘会往屏幕外跑，看起来就是方向反了。
     private var notchGlobalRect: CGRect = .zero
+    /// 无刘海屏：收起态画一颗常驻胶囊（圆槽），而不是左右两只黑耳
+    private var usesSlot = false
+    private var slotGlobalRect: CGRect = .zero
     /// 菜单栏带高度：耳朵必须按这个算高度，**不能用 bounds.height**
     /// —— 窗口展开后 bounds 会变成 294pt，耳朵会被拉成一根长条。
     private var bandHeight: CGFloat = 39
@@ -130,7 +133,9 @@ final class NotchIndicatorView: NSView {
         notchBottomInset = layout.notchBottomInset
         notchCornerRadius = layout.notchCornerRadius
         bandHeight = layout.bandHeight
-        notchGlobalRect = layout.geometry.notchRect ?? .zero
+        notchGlobalRect = layout.geometry.notchRect
+        usesSlot = layout.usesSlot
+        slotGlobalRect = layout.usesSlot ? layout.slotRect : .zero
         needsDisplay = true
     }
 
@@ -154,6 +159,11 @@ final class NotchIndicatorView: NSView {
         // 文字比黑耳更早淡出：黑耳收到一半时文字就没了，不会出现"半个字贴在刘海边上"
         let textAlpha = min(max((earProgress - 0.45) / 0.55, 0), 1)
 
+        if usesSlot {
+            drawSlot(textAlpha: textAlpha)
+            return
+        }
+
         // 用**当前窗口 frame** 把刘海的全局坐标换算成窗口内坐标：
         // 展开动画一开始窗口就已经是展开尺寸了，不能拿"收起窗口"的坐标去摆。
         let frame = window?.frame ?? .zero
@@ -174,6 +184,93 @@ final class NotchIndicatorView: NSView {
             drawEar(rect, side: .right)
             drawMetric(rightMetric, in: rect, alpha: textAlpha)
         }
+    }
+
+    /// 无刘海屏的常驻圆槽：一颗胶囊，里面是 [左侧指标] 表情 + CPU% [右侧指标]。
+    ///
+    /// 它**一直可见**（不像物理刘海屏那样靠刘海本身当视觉锚点），
+    /// 悬浮就长成面板；展开过程中内容先淡出，胶囊由 SwiftUI 的岛形接管。
+    private func drawSlot(textAlpha: CGFloat) {
+        let frame = window?.frame ?? .zero
+        var rect = slotGlobalRect
+        rect.origin.x -= frame.minX
+        rect.origin.y -= frame.minY
+        guard rect.width > 4 else { return }
+
+        let radius = rect.height / 2
+        let capsule = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
+        IndicatorPalette.earFill.setFill()
+        capsule.fill()
+        NSColor.white.withAlphaComponent(0.10).setStroke()
+        capsule.lineWidth = 1
+        capsule.stroke()
+
+        guard textAlpha > 0.02 else { return }
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: rect.insetBy(dx: 3, dy: 0)).addClip()
+
+        // 三块内容按顺序横排并整体居中
+        var parts: [NSAttributedString] = []
+        if let left = attributedString(for: leftMetric) { parts.append(left) }
+        parts.append(slotCenterText())
+        if let right = attributedString(for: rightMetric) { parts.append(right) }
+
+        let gap = NSAttributedString(string: "  ", attributes: [.font: NSFont.systemFont(ofSize: 10)])
+        let joined = NSMutableAttributedString()
+        for (index, part) in parts.enumerated() {
+            if index > 0 { joined.append(gap) }
+            joined.append(part)
+        }
+        let alphaApplied = fading(joined, alpha: textAlpha)
+        let size = alphaApplied.size()
+        let origin = CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2)
+        alphaApplied.draw(at: origin)
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    /// 圆槽中间那块：随负载变脸的表情（+ CPU 百分比，但左右已经显示了 CPU 就不重复）
+    private func slotCenterText() -> NSAttributedString {
+        let usage = snapshot?.cpu.total ?? 0
+        let face: String
+        switch usage {
+        case ..<0.15: face = "😴"
+        case ..<0.45: face = "🙂"
+        case ..<0.75: face = "😅"
+        default: face = "🔥"
+        }
+        let text = NSMutableAttributedString()
+        text.append(NSAttributedString(string: face, attributes: [
+            .font: NSFont.systemFont(ofSize: 13),
+        ]))
+        let cpuAlreadyShown = leftMetric == .cpu || rightMetric == .cpu
+        if !cpuAlreadyShown, snapshot != nil {
+            text.append(NSAttributedString(string: " " + Fmt.percentInt(usage) + "%", attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+                .foregroundColor: IndicatorPalette.cpu(usage),
+            ]))
+        }
+        return text
+    }
+
+    /// 按段各自乘上淡出系数（保留原配色）
+    private func fading(_ text: NSAttributedString, alpha: CGFloat) -> NSAttributedString {
+        let faded = NSMutableAttributedString(attributedString: text)
+        let full = NSRange(location: 0, length: faded.length)
+        var alphas: [(NSRange, NSColor)] = []
+        faded.enumerateAttribute(.foregroundColor, in: full) { value, range, _ in
+            if let color = value as? NSColor { alphas.append((range, color)) }
+        }
+        for (range, color) in alphas {
+            faded.addAttribute(.foregroundColor,
+                               value: color.withAlphaComponent(color.alphaComponent * alpha), range: range)
+        }
+        // 表情没有显式前景色，补一个整体透明度
+        let wrapper = NSMutableAttributedString(attributedString: faded)
+        wrapper.enumerateAttribute(.font, in: full) { value, range, _ in
+            guard let font = value as? NSFont, font.pointSize >= 13 else { return }
+            wrapper.addAttribute(.foregroundColor, value: NSColor.white.withAlphaComponent(alpha), range: range)
+        }
+        return wrapper
     }
 
     private enum EarSide { case left, right }
@@ -322,12 +419,13 @@ final class NotchIndicatorView: NSView {
             }
 
         case .temperature:
-            append("℃", font: label, color: IndicatorPalette.label)
+            // 只写 "52°C"：单位已经说明一切，再加 "CPU"/"℃" 都是废话
             if let celsius = snap.thermal.cpuTemperature {
-                append(" \(Int(celsius.rounded()))°", font: value,
+                append("\(Int(celsius.rounded()))", font: value,
                        color: IndicatorPalette.temperature(celsius))
+                append("°C", font: label, color: IndicatorPalette.temperature(celsius))
             } else {
-                append(" —", font: value, color: IndicatorPalette.label)
+                append("—", font: value, color: IndicatorPalette.label)
             }
 
         case .fan:

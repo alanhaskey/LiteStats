@@ -44,6 +44,13 @@ enum SelfTest {
         check("拿到有效屏幕", geometry.screenFrame.width > 100 && geometry.screenFrame.height > 100)
         check("菜单栏/刘海高度 > 0", geometry.menuBarHeight > 0, "\(geometry.menuBarHeight)")
 
+        // 自检用的偏好（独立 suite，不碰用户真实设置）
+        let slotDefaults = UserDefaults(suiteName: "litestats-selftest-slot") ?? .standard
+        slotDefaults.removePersistentDomain(forName: "litestats-selftest-slot")
+        let prefs = Preferences(defaults: slotDefaults)
+        prefs.leftIndicator = .cpu
+        prefs.rightIndicator = .temperature
+
         let layout = AppDelegate.standardLayout(geometry: geometry)
         info("收起 frame=\(rect(layout.collapsedFrame))")
         info("展开 frame=\(rect(layout.expandedFrame))")
@@ -82,15 +89,17 @@ enum SelfTest {
         // MARK: 2b. 无刘海屏的"合成缺口"（外接屏 / 非刘海机型走这条）
 
         let wide = CGRect(x: 0, y: 0, width: 1800, height: 1169)
-        let synthetic = ScreenGeometry.syntheticNotch(screenFrame: wide, menuBarHeight: 39)
-        check("合成缺口：居中在屏幕顶部", abs(synthetic.midX - wide.midX) < 0.5
-              && abs(synthetic.maxY - wide.maxY) < 0.5, rect(synthetic))
-        check("合成缺口：与菜单栏同高且宽度合理",
-              abs(synthetic.height - 39) < 0.5 && synthetic.width >= 120 && synthetic.width <= 220,
-              "\(synthetic.width)×\(synthetic.height)")
-        let narrow = ScreenGeometry.syntheticNotch(screenFrame: CGRect(x: 0, y: 0, width: 600, height: 800),
-                                                   menuBarHeight: 24)
-        check("合成缺口：窄屏有最小宽度兜底", narrow.width >= 120, "\(narrow.width)")
+        let synthetic = ScreenGeometry.syntheticSlot(screenFrame: wide, menuBarHeight: 39)
+        check("圆槽：水平居中", abs(synthetic.midX - wide.midX) < 0.5, rect(synthetic))
+        check("圆槽：整颗落在菜单栏带内",
+              synthetic.minY >= wide.maxY - 39 - 0.5 && synthetic.maxY <= wide.maxY + 0.5,
+              rect(synthetic))
+        check("圆槽：高度适中（不占满菜单栏、也不至于看不见）",
+              synthetic.height >= 18 && synthetic.height <= 39 - 4, "\(synthetic.height)")
+        check("圆槽：是胶囊比例（圆角 = 半高）", abs(synthetic.height - 26) < 6, "\(synthetic.height)")
+        let narrow = ScreenGeometry.syntheticSlot(screenFrame: CGRect(x: 0, y: 0, width: 600, height: 800),
+                                                  menuBarHeight: 24)
+        check("圆槽：窄屏有最小宽度兜底", narrow.width >= 90, "\(narrow.width)")
         let allGeometries = ScreenGeometry.all()
         check("每块屏幕都能算出几何", allGeometries.count == NSScreen.screens.count,
               "\(allGeometries.count) vs \(NSScreen.screens.count)")
@@ -159,7 +168,7 @@ enum SelfTest {
               rect(controller.windowFrame))
 
         // MARK: 4b. 常驻指示条（收起态画在刘海两侧的黑耳里）
-        verifyIndicators(geometry: geometry, baseLayout: layout, service: service)
+        verifyIndicators(geometry: geometry, baseLayout: layout, service: service, prefs: prefs)
 
         // MARK: 4c. 形变动画（水滴展开）
         verifyIslandMorph(layout: layout, service: service)
@@ -265,6 +274,39 @@ enum SelfTest {
                         bodyRadius: Theme.cornerRadius, tabRadius: Theme.tabCornerRadius)
                 .path(in: .zero).boundingRect
         }
+
+        // 无刘海屏：进度 0 必须正好是圆槽（这样和 AppKit 画的收起态无缝衔接）
+        var slotLayout = layout
+        slotLayout.geometry = ScreenGeometry(displayID: 99, name: "外接屏(合成)",
+                                             screenFrame: layout.geometry.screenFrame,
+                                             visibleFrame: layout.geometry.visibleFrame,
+                                             menuBarHeight: layout.geometry.menuBarHeight,
+                                             notchRect: ScreenGeometry.syntheticSlot(
+                                                screenFrame: layout.geometry.screenFrame,
+                                                menuBarHeight: layout.geometry.menuBarHeight),
+                                             hasPhysicalNotch: false,
+                                             backingScale: 1)
+        let slotShape = { (p: CGFloat) in
+            IslandShape(progress: p,
+                        usesSlot: true,
+                        slot: slotLayout.slotRectInExpandedWindow,
+                        notch: slotLayout.notchRect,
+                        tab: slotLayout.tabRect,
+                        body: slotLayout.bodyRect,
+                        bodyRadius: Theme.cornerRadius,
+                        tabRadius: Theme.tabCornerRadius)
+                .path(in: .zero).boundingRect
+        }
+        let slotStart = slotShape(0)
+        let slotEnd = slotShape(1)
+        info("合成屏形变：p=0 \(rect(slotStart))（圆槽 \(rect(slotLayout.slotRectInExpandedWindow))）p=1 \(rect(slotEnd))")
+        check("合成屏：p=0 的轮廓正好是圆槽",
+              nearlyEqual(slotStart, slotLayout.slotRectInExpandedWindow, tolerance: 1.5),
+              "\(rect(slotStart))")
+        check("合成屏：p=1 覆盖面板体",
+              slotEnd.contains(slotLayout.bodyRect.insetBy(dx: 1, dy: 1))
+              || (slotEnd.width >= slotLayout.bodyRect.width - 1 && slotEnd.maxY >= slotLayout.bodyRect.maxY - 1),
+              rect(slotEnd))
 
         let start = bounds(0)
         let end = bounds(1)
@@ -455,7 +497,7 @@ enum SelfTest {
 
     /// 常驻指示条验证：几何（黑耳放得下指示条、不越界/不覆盖刘海）+ 真实绘制 + 展开后自动隐藏
     private static func verifyIndicators(geometry: ScreenGeometry, baseLayout: PanelLayout,
-                                         service: MonitorService) {
+                                         service: MonitorService, prefs: Preferences) {
         let notch = geometry.notchRect
         guard notch.width > 1 else {
             info("缺口宽度异常，跳过指示条验证")
@@ -530,6 +572,37 @@ enum SelfTest {
             check("右耳已绘制出指示条", rightCover > 0.80)
             check("刘海正上方保持透明（没有画成整条黑带）", notchAlpha < 24, "alpha=\(notchAlpha)")
             dump(bitmap, suffix: "indicators")
+
+        // 无刘海屏的圆槽：真的渲染一张图出来（收起态长什么样全靠它）
+        if let geometry = ScreenGeometry.resolve() {
+            var slotGeometry = geometry
+            slotGeometry = ScreenGeometry(displayID: 99, name: "合成屏",
+                                          screenFrame: geometry.screenFrame,
+                                          visibleFrame: geometry.visibleFrame,
+                                          menuBarHeight: geometry.menuBarHeight,
+                                          notchRect: ScreenGeometry.syntheticSlot(
+                                            screenFrame: geometry.screenFrame,
+                                            menuBarHeight: geometry.menuBarHeight),
+                                          hasPhysicalNotch: false,
+                                          backingScale: geometry.backingScale)
+            let slotLayout = AppDelegate.standardLayout(geometry: slotGeometry, preferences: prefs)
+            let slotView = NotchIndicatorView(frame: CGRect(origin: .zero, size: slotLayout.collapsedFrame.size))
+            slotView.configure(layout: slotLayout, leftMetric: prefs.leftIndicator, rightMetric: prefs.rightIndicator)
+            slotView.update(snapshot: service.snapshot)
+            let slotWindow = NSWindow(contentRect: slotLayout.collapsedFrame, styleMask: [.borderless],
+                                      backing: .buffered, defer: false)
+            slotWindow.contentView = slotView
+            slotView.setEarProgress(1, animated: false, duration: 0)
+            slotView.display()
+            if let bitmap = slotView.bitmapImageRepForCachingDisplay(in: slotView.bounds) {
+                slotView.cacheDisplay(in: slotView.bounds, to: bitmap)
+                let coverage = alphaCoverage(bitmap,
+                                             region: CGRect(origin: .zero, size: slotLayout.collapsedFrame.size),
+                                             scale: 1)
+                check("圆槽渲染出内容", coverage > 0.4, String(format: "覆盖率 %.1f%%", coverage * 100))
+                dump(bitmap, suffix: "slot")
+            }
+        }
         } else {
             check("指示条离屏渲染可用", false, "bitmapImageRepForCachingDisplay 返回 nil")
         }

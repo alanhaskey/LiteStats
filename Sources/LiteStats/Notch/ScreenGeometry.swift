@@ -44,14 +44,23 @@ struct ScreenGeometry: Equatable {
         (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
     }
 
-    /// 无刘海屏的"合成缺口"：顶部中心、与菜单栏同高。
-    /// 宽度取屏幕宽度的 18%（上限 220pt、下限 120pt）—— 和物理刘海一个量级，
-    /// 落在菜单栏中段（通常是空白区），不会压到左侧应用菜单和右侧状态项。
-    static func syntheticNotch(screenFrame: CGRect, menuBarHeight: CGFloat) -> CGRect {
-        let width = min(220, max(120, screenFrame.width * 0.18))
+    /// 无刘海屏的"圆槽"：顶部居中的一颗胶囊（不是与菜单栏同高的假刘海）。
+    ///
+    /// 为什么不照搬物理刘海的形状：物理刘海有屏幕顶部那条边可以"融进去"，
+    /// 外接屏没有，画一个贴顶的黑色方块只会像个突兀的补丁。
+    /// 一颗常驻胶囊既能一直看得见（可发现性），又能放数据/表情，悬浮时再长成面板。
+    static func syntheticSlot(screenFrame: CGRect, menuBarHeight: CGFloat,
+                              size: CGSize = CGSize(width: 138, height: 26)) -> CGRect {
+        let width = min(size.width, max(90, screenFrame.width * 0.2))
+        let height = min(size.height, max(18, menuBarHeight - 4))
         return CGRect(x: screenFrame.midX - width / 2,
-                      y: screenFrame.maxY - menuBarHeight,
-                      width: width, height: menuBarHeight)
+                      y: screenFrame.maxY - menuBarHeight + (menuBarHeight - height) / 2,
+                      width: width, height: height)
+    }
+
+    /// 兼容旧名（自检里用到）
+    static func syntheticNotch(screenFrame: CGRect, menuBarHeight: CGFloat) -> CGRect {
+        syntheticSlot(screenFrame: screenFrame, menuBarHeight: menuBarHeight)
     }
 
     /// 某块屏幕的完整几何。
@@ -73,7 +82,7 @@ struct ScreenGeometry: Equatable {
         }
 
         let menuBar = max(notch?.height ?? 0, max(screen.safeAreaInsets.top, derivedBar, 24))
-        let rect = notch ?? syntheticNotch(screenFrame: frame, menuBarHeight: menuBar)
+        let rect = notch ?? syntheticSlot(screenFrame: frame, menuBarHeight: menuBar)
         return ScreenGeometry(displayID: id,
                               name: screen.localizedName,
                               screenFrame: frame,
@@ -120,6 +129,23 @@ struct PanelLayout: Equatable {
     /// 面板体底部圆角
     var cornerRadius: CGFloat = 20
 
+    /// 无刘海屏上那颗常驻圆槽的尺寸
+    var slotSize = CGSize(width: 92, height: 26)
+
+    /// 是否是无刘海屏（用圆槽而不是物理刘海）
+    var usesSlot: Bool { !geometry.hasPhysicalNotch }
+
+    /// 无刘海屏：收起态就是这颗圆槽。宽度按"表情 + 实际配了哪些指示条"算，
+    /// 不留一大块空黑（不做成耳朵那种固定宽度）。
+    var slotRect: CGRect {
+        var width = slotSize.width                 // 基础宽度：表情（+ 没侧边指标时的 CPU%）
+        if leftEarActive { width += 54 }
+        if rightEarActive { width += 54 }
+        return CGRect(x: geometry.notchRect.midX - width / 2,
+                      y: geometry.notchRect.minY,
+                      width: width, height: geometry.notchRect.height)
+    }
+
     /// 顶部菜单栏带高度：岛颈就画在这一带里
     var bandHeight: CGFloat { geometry.menuBarHeight }
 
@@ -132,8 +158,16 @@ struct PanelLayout: Equatable {
     var collapsedLeftExtent: CGFloat { max(collapsedFlank, leftEarWidth) }
     var collapsedRightExtent: CGFloat { max(collapsedFlank, rightEarWidth) }
 
-    /// 收起态窗口 frame（全局坐标）：贴着屏幕顶部、以缺口为中心的一条带
+    /// 收起态窗口 frame（全局坐标）
+    /// - 有物理刘海：贴着屏幕顶部、以刘海为中心的一条带（悬浮热区在菜单栏带里）
+    /// - 无刘海屏：就是那颗圆槽本身（位置/高度都跟着圆槽走）
     var collapsedFrame: CGRect {
+        if usesSlot {
+            var rect = slotRect
+            // 圆槽外仍然留一点热区，避免必须精确压中
+            rect = rect.insetBy(dx: -6, dy: -2)
+            return rect
+        }
         let notchWidth = geometry.notchRect.width
         let left = geometry.anchorX - notchWidth / 2 - collapsedLeftExtent
         let right = geometry.anchorX + notchWidth / 2 + collapsedRightExtent
@@ -191,6 +225,15 @@ struct PanelLayout: Equatable {
         let frame = collapsedFrame
         let notchRight = notch.maxX - frame.minX
         return CGRect(x: notchRight, y: 0, width: max(0, frame.width - notchRight), height: frame.height)
+    }
+
+    /// SwiftUI 绘制用：展开窗口内（左上原点）的圆槽矩形（无刘海屏的画法）
+    var slotRectInExpandedWindow: CGRect {
+        let frame = expandedFrame
+        var rect = slotRect
+        rect.origin.x -= frame.minX
+        rect.origin.y = frame.maxY - rect.maxY
+        return rect
     }
 
     /// SwiftUI 绘制用：窗口内左上原点坐标下的面板体矩形。

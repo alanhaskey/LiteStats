@@ -8,6 +8,9 @@ import SwiftUI
 struct IslandShape: Shape, Animatable {
     /// 0 = 收起（轮廓与物理刘海完全重合），1 = 完全展开
     var progress: CGFloat
+    /// 无刘海屏：收起态是这颗常驻圆槽（胶囊），展开时从它长出面板
+    var usesSlot: Bool = false
+    var slot: CGRect = .zero
     /// 物理刘海矩形（窗口内坐标，左上原点）
     var notch: CGRect
     /// 目标岛颈矩形（展开态，窗口内坐标）
@@ -25,6 +28,8 @@ struct IslandShape: Shape, Animatable {
     func path(in rect: CGRect) -> Path {
         let p = min(max(progress, 0), 1)
         var path = Path()
+
+        if usesSlot { return slotPath(p) }
 
         guard notch.width > 1 else { return path }
 
@@ -67,6 +72,32 @@ struct IslandShape: Shape, Animatable {
         }
 
         // 两段路径用 nonZero 填充规则取并集（上层调用方不要改成 evenOdd）
+        return path
+    }
+
+    /// 无刘海屏的形变：圆槽（胶囊）不动，面板体从它下方长出来并摊开。
+    /// progress = 0 时只剩胶囊 —— 与 AppKit 画的收起态圆槽完全重合，所以过场无缝。
+    private func slotPath(_ p: CGFloat) -> Path {
+        var path = Path()
+        guard slot.width > 1 else { return path }
+
+        let bodyT = pow(p, 1.35)
+        let width = max(slot.width * 0.92, body.width * (0.38 + 0.62 * pow(p, 0.8)))
+        let top = slot.maxY - 5                     // 与胶囊轻微重叠，避免中间出现一道缝
+        let height = (body.maxY - top) * bodyT
+        if height > 1 {
+            let rect = CGRect(x: body.midX - width / 2, y: top, width: width, height: height)
+            let bottomRadius = min(rect.height / 2,
+                                   bodyRadius + (width * 0.45 - bodyRadius) * (1 - pow(p, 0.7)))
+            path.addPath(Self.roundedRect(rect,
+                                          topLeft: bodyRadius, topRight: bodyRadius,
+                                          bottomRight: max(0, bottomRadius),
+                                          bottomLeft: max(0, bottomRadius)))
+        }
+
+        let radius = slot.height / 2
+        path.addPath(Self.roundedRect(slot, topLeft: radius, topRight: radius,
+                                      bottomRight: radius, bottomLeft: radius))
         return path
     }
 
@@ -135,6 +166,8 @@ struct PanelRootView: View {
     private var islandShape: IslandShape {
         let layout = presentation.layout
         return IslandShape(progress: presentation.islandProgress,
+                           usesSlot: layout.usesSlot,
+                           slot: layout.slotRectInExpandedWindow,
                            notch: layout.notchRect,
                            tab: layout.tabRect,
                            body: layout.bodyRect,
