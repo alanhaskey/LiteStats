@@ -233,9 +233,14 @@ enum SelfTest {
               layout.collapsedFrame.width > notch.width + layout.leftIndicatorWidth)
         check("展开 frame 仍完整包含收起 frame", layout.expandedFrame.contains(layout.collapsedFrame))
 
+        // 先采一拍，让指示条渲染出真实数值（不然预览里只有 "CPU —"）
+        service.start()
+        pump(1.4)
+
         let controller = NotchPanelController(layout: layout, service: service)
         controller.hoverEnabled = false
         controller.applyIndicators(left: .cpu, right: .network)
+        controller.updateIndicator(service.snapshot)
         controller.start()
         pump(0.25)
 
