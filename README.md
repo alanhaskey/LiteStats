@@ -138,8 +138,17 @@ ad-hoc 签名或不在 `/Applications` 时会自动退回写一个 `~/Library/La
   `nettop`（每进程网络字节）
 - 底部显示存储路径与占用，**一键清空**（带二次确认）
 
-**存储**：本地文件，分钟明细保留 7 天、小时级 180 天、天级永久（一年 365 行）。
-清空会删除全部记录且不可恢复。
+**存储**（`~/Library/Application Support/LiteStats/History/`，自定义紧凑二进制，非 SQLite）：
+
+| 文件 | 记录 | 保留 |
+| --- | --- | --- |
+| `minutes.bin` | 72 B/条 | 7 天 |
+| `hours.bin` / `days.bin` | 64 B/条 | 180 天 / 永久 |
+| `app-hours.bin` / `app-days.bin` | 128 B/条（应用×时段） | 7 天 / 180 天 |
+| `app-names.bin` | name→path 旁表 | 只追加 |
+
+只追加 + 定长记录 → 断电最多丢尾部一条（残缺记录按长度取整丢弃，不会整库损坏）；
+清理过期数据走临时文件 + rename。清空会删除全部记录且不可恢复。
 
 **开销（实测）**：
 
@@ -161,9 +170,14 @@ ad-hoc 签名或不在 `/Applications` 时会自动退回写一个 `~/Library/La
 > 表现为 App 重启后所有应用的 `path` 全丢。现在 `.appNames` 会跳过整体重写，
 > 单元测试 `persistenceRoundTripSurvivesReopen` 守住这个行为。
 
-> 两个实现要点：nettop 给出的是**进程启动以来的累计值**，所以按 `(pid, 名字)` 缓存上次值做差分；
-> PID 会被复用，所以名字变了必须重置基线。这也是为什么"按应用"的流量在 App 启动后的第一拍是空的
-> —— 第一拍只建立基线。
+> 三个实现要点（都是实测踩出来的）：
+> 1. nettop 给出的是**进程启动以来的累计值**，所以按 `(pid, 名字)` 缓存上次值做差分；
+>    PID 会被复用，名字变了必须重置基线 —— 这也是为什么"按应用"的流量在 App 启动后第一拍是空的。
+> 2. nettop **把进程名截断到 15 个字符**（`DSH Desktop Helper` → `DSH Desktop Hel`），
+>    直接用会把一个应用拆成"有 CPU 的"和"有网络的"两条；已用同一拍 libproc 的 pid→完整名归一化。
+> 3. **`Process.waitUntilExit()` 在本机（CLT-only）即使对 `/bin/echo` 也要 ~67 ms**（Foundation 的等待带轮询），
+>    而 nettop 13 ms 就写完了 stdout。改成"读完 stdout 即返回 + 空的 terminationHandler 异步回收"，
+>    单次采集从 80 ms 降到 13 ms（连跑 20 次无残留进程、无僵尸）。
 
 ## 实测开销
 
