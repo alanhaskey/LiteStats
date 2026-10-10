@@ -303,10 +303,16 @@ enum SelfTest {
         check("合成屏：p=0 的轮廓正好是圆槽",
               nearlyEqual(slotStart, slotLayout.slotRectInExpandedWindow, tolerance: 1.5),
               "\(rect(slotStart))")
-        check("合成屏：p=1 覆盖面板体",
-              slotEnd.contains(slotLayout.bodyRect.insetBy(dx: 1, dy: 1))
-              || (slotEnd.width >= slotLayout.bodyRect.width - 1 && slotEnd.maxY >= slotLayout.bodyRect.maxY - 1),
-              rect(slotEnd))
+        // 关键：展开完成时轮廓必须**正好**是面板体本身 —— 圆槽不能还多出一截压在面板上
+        check("合成屏：p=1 正好等于面板体（圆槽被完全吃掉）",
+              nearlyEqual(slotEnd, slotLayout.bodyRect, tolerance: 1.5),
+              "轮廓 \(rect(slotEnd)) vs 面板 \(rect(slotLayout.bodyRect))")
+        // 中间帧必须是"一个形状"，不能出现上面一颗胶囊 + 下面一块面板的叠加：
+        // 判据是中间帧高度落在圆槽与面板之间、且顶边单调下移
+        let slotMid = slotShape(0.5)
+        check("合成屏：中间帧是单一形状（高度介于圆槽与面板之间）",
+              slotMid.height > slotStart.height + 2 && slotMid.height < slotEnd.height - 2,
+              "高度 \(Int(slotMid.height))")
 
         let start = bounds(0)
         let end = bounds(1)
@@ -594,6 +600,26 @@ enum SelfTest {
             slotWindow.contentView = slotView
             slotView.setEarProgress(1, animated: false, duration: 0)
             slotView.display()
+            // 再渲染一张"圆槽长成面板之后"的样子：不应该再看到圆槽压在面板上
+            let slotController = NotchPanelController(layout: slotLayout, service: service)
+            slotController.forceState(.expanded, animated: false)
+            slotController.setMorphProgressForTest(1)
+            pump(0.2)
+            if let bitmap = slotController.renderContentBitmap() {
+                dump(bitmap, suffix: "slot-expanded")
+                // 展开完成时，窗口顶部（菜单栏带）里除了岛颈不该再有别的黑色块
+                let bandBottom = slotLayout.bandHeight
+                let scale = CGFloat(bitmap.pixelsWide) / max(slotLayout.expandedFrame.width, 1)
+                let abovePanel = CGRect(x: 0, y: 0, width: slotLayout.expandedFrame.width,
+                                        height: max(1, bandBottom - 1))
+                let coverage = alphaCoverage(bitmap, region: abovePanel, scale: scale, threshold: 200)
+                info(String(format: "展开后菜单栏带内的绘制覆盖率 %.1f%%（岛颈宽度 %.0fpt / 窗口 %.0fpt）",
+                            coverage * 100, slotLayout.slotRect.width, slotLayout.expandedFrame.width))
+                check("展开后圆槽不再单独存在（菜单栏带内只剩岛颈那一条）",
+                      coverage < 0.35, String(format: "覆盖率 %.1f%%", coverage * 100))
+            }
+            slotController.stop()
+
             if let bitmap = slotView.bitmapImageRepForCachingDisplay(in: slotView.bounds) {
                 slotView.cacheDisplay(in: slotView.bounds, to: bitmap)
                 let coverage = alphaCoverage(bitmap,

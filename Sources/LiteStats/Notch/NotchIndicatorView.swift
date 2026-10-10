@@ -196,16 +196,20 @@ final class NotchIndicatorView: NSView {
         rect.origin.x -= frame.minX
         rect.origin.y -= frame.minY
         guard rect.width > 4 else { return }
+        // 展开过程中整颗圆槽淡出：圆槽由 SwiftUI 的岛形接管（形状完全重合，所以看不出切换），
+        // 否则收起态这颗胶囊会一直压在面板顶上。
+        guard earProgress > 0.01 else { return }
 
         let radius = rect.height / 2
         let capsule = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
-        IndicatorPalette.earFill.setFill()
+        IndicatorPalette.earFill.withAlphaComponent(earProgress).setFill()
         capsule.fill()
-        NSColor.white.withAlphaComponent(0.10).setStroke()
+        NSColor.white.withAlphaComponent(0.10 * earProgress).setStroke()
         capsule.lineWidth = 1
         capsule.stroke()
 
-        guard textAlpha > 0.02 else { return }
+        let slotAlpha = textAlpha * earProgress
+        guard slotAlpha > 0.02 else { return }
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: rect.insetBy(dx: 3, dy: 0)).addClip()
 
@@ -221,7 +225,7 @@ final class NotchIndicatorView: NSView {
             if index > 0 { joined.append(gap) }
             joined.append(part)
         }
-        let alphaApplied = fading(joined, alpha: textAlpha)
+        let alphaApplied = fading(joined, alpha: slotAlpha)
         let size = alphaApplied.size()
         let origin = CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2)
         alphaApplied.draw(at: origin)

@@ -75,30 +75,26 @@ struct IslandShape: Shape, Animatable {
         return path
     }
 
-    /// 无刘海屏的形变：圆槽（胶囊）不动，面板体从它下方长出来并摊开。
-    /// progress = 0 时只剩胶囊 —— 与 AppKit 画的收起态圆槽完全重合，所以过场无缝。
+    /// 无刘海屏的形变：**一个形状从头长到尾** —— 圆槽直接长成面板。
+    ///
+    /// 关键点：不把"圆槽"和"面板"当成两个图形去叠。
+    /// 早期版本让胶囊固定不动、面板从它下方长出来，结果两者重叠（胶囊还带描边），
+    /// 展开后能看到一颗胶囊压在面板顶上。现在宽度/顶边/高度/圆角一起插值：
+    /// progress = 0 是那颗胶囊，progress = 1 正好等于面板体本身（圆槽被"吃掉"）。
     private func slotPath(_ p: CGFloat) -> Path {
         var path = Path()
-        guard slot.width > 1 else { return path }
+        guard slot.width > 1, body.width > slot.width else { return path }
 
-        let bodyT = pow(p, 1.35)
-        let width = max(slot.width * 0.92, body.width * (0.38 + 0.62 * pow(p, 0.8)))
-        let top = slot.maxY - 5                     // 与胶囊轻微重叠，避免中间出现一道缝
-        let height = (body.maxY - top) * bodyT
-        if height > 1 {
-            let rect = CGRect(x: body.midX - width / 2, y: top, width: width, height: height)
-            let bottomRadius = min(rect.height / 2,
-                                   bodyRadius + (width * 0.45 - bodyRadius) * (1 - pow(p, 0.7)))
-            path.addPath(Self.roundedRect(rect,
-                                          topLeft: bodyRadius, topRight: bodyRadius,
-                                          bottomRight: max(0, bottomRadius),
-                                          bottomLeft: max(0, bottomRadius)))
-        }
-
-        let radius = slot.height / 2
-        path.addPath(Self.roundedRect(slot, topLeft: radius, topRight: radius,
-                                      bottomRight: radius, bottomLeft: radius))
-        return path
+        let widthT = pow(p, 0.85)                 // 先横向摊开
+        let heightT = pow(p, 1.25)                // 再纵向落下
+        let width = slot.width + (body.width - slot.width) * widthT
+        let top = slot.minY + (body.minY - slot.minY) * pow(p, 1.10)
+        let bottom = slot.maxY + (body.maxY - slot.maxY) * heightT
+        let rect = CGRect(x: body.midX - width / 2, y: top,
+                          width: width, height: max(slot.height, bottom - top))
+        let radius = slot.height / 2 + (bodyRadius - slot.height / 2) * widthT
+        return Self.roundedRect(rect, topLeft: radius, topRight: radius,
+                                bottomRight: radius, bottomLeft: radius)
     }
 
     /// 四个角可以给不同半径的圆角矩形（`addRoundedRect` 不支持）
