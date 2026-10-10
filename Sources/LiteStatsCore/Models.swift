@@ -1,14 +1,15 @@
-// ⚠️ 占位实现（由 core-agent 替换）
+// LiteStatsCore 公开数据模型（接口已冻结，签名不得改动）。
 //
-// 本文件只冻结 LiteStatsCore 的公开接口，内部实现是假的。
-// 接口契约见 docs/architecture.md 的「LiteStatsCore 公开接口」一节，已冻结，不要改动签名。
-// core-agent 需要把本文件删除，改为按功能拆分的真实实现（CPUMonitor/MemoryMonitor/...）。
+// 本文件只放值类型；采样逻辑分散在 CPUSensor / MemorySensor / GPUSensor /
+// NetworkSensor / DiskSensor，编排在 SystemMonitor。
+// 约定：所有比率字段都是 0...1（不是百分比）；取不到的指标用 nil / 0，绝不抛错。
 import Foundation
 
 // MARK: - 配置
 
 public struct MonitorConfiguration: Sendable {
     /// 每 N 次采样读取一次 GPU（IOKit 读取代价最高，默认每 2 次读一次）。
+    /// <= 0 时按 1 处理（即每拍都读），避免取模/除零的边界问题。
     public var gpuRefreshEveryNTicks: Int
     /// 是否采样磁盘占用。
     public var includeDisk: Bool
@@ -17,6 +18,9 @@ public struct MonitorConfiguration: Sendable {
         self.gpuRefreshEveryNTicks = gpuRefreshEveryNTicks
         self.includeDisk = includeDisk
     }
+
+    /// 归一化后的 GPU 刷新间隔：永远 >= 1。
+    var normalizedGPUInterval: Int { max(gpuRefreshEveryNTicks, 1) }
 }
 
 // MARK: - 采样结果（全部为不可变值类型）
@@ -50,6 +54,14 @@ public struct CPUStats: Sendable, Equatable {
         self.load5 = load5
         self.load15 = load15
     }
+
+    /// 基线（还没有两次 tick 可比较）时的取值：完全空闲。
+    static func baseline(coreCount: Int, load1: Double, load5: Double, load15: Double) -> CPUStats {
+        CPUStats(total: 0, user: 0, system: 0, idle: 1,
+                 perCore: [Double](repeating: 0, count: max(coreCount, 0)),
+                 coreCount: coreCount,
+                 load1: load1, load5: load5, load15: load15)
+    }
 }
 
 public struct MemoryStats: Sendable, Equatable {
@@ -60,7 +72,7 @@ public struct MemoryStats: Sendable, Equatable {
     public let inactive: UInt64
     public let wired: UInt64
     public let compressed: UInt64
-    /// 可回收的文件缓存（internal - purgeable）
+    /// 可回收的文件缓存（file-backed 的 external 页减去 purgeable 页）
     public let cached: UInt64
     public let swapTotal: UInt64
     public let swapUsed: UInt64
@@ -83,6 +95,10 @@ public struct MemoryStats: Sendable, Equatable {
         self.swapTotal = swapTotal
         self.swapUsed = swapUsed
     }
+
+    /// 采样失败时的兜底值（全 0，usage 也就是 0，不会崩）。
+    static let empty = MemoryStats(total: 0, used: 0, free: 0, active: 0, inactive: 0,
+                                   wired: 0, compressed: 0, cached: 0, swapTotal: 0, swapUsed: 0)
 }
 
 public struct GPUStats: Sendable, Equatable {
@@ -99,6 +115,10 @@ public struct GPUStats: Sendable, Equatable {
         self.inUseMemory = inUseMemory
         self.allocatedMemory = allocatedMemory
     }
+
+    /// 完全取不到（无独显 / 权限受限 / 非 Apple GPU）时的降级值。
+    public static let unavailable = GPUStats(name: nil, utilization: nil,
+                                             inUseMemory: nil, allocatedMemory: nil)
 }
 
 public struct NetworkStats: Sendable, Equatable {
@@ -120,6 +140,10 @@ public struct NetworkStats: Sendable, Equatable {
         self.interfaceName = interfaceName
         self.isConnected = isConnected
     }
+
+    /// 接口全取不到时的降级值。
+    public static let unavailable = NetworkStats(download: 0, upload: 0, received: 0, sent: 0,
+                                                 interfaceName: nil, isConnected: false)
 }
 
 public struct DiskStats: Sendable, Equatable {
@@ -163,58 +187,4 @@ public struct SystemSnapshot: Sendable {
         self.thermalState = thermalState
         self.sampleIndex = sampleIndex
     }
-}
-
-// MARK: - 纯函数（可单测，不碰硬件）
-
-public enum CPUUsageMath {
-    /// 从两次 `host_processor_info` 的 tick 数组计算占用率。
-    /// `ticks` 布局与 CPU_STATE_MAX 一致：user, system, idle, nice，按核心连续排列。
-    public static func compute(previous: [UInt32], current: [UInt32], coreCount: Int)
-        -> (total: Double, user: Double, system: Double, idle: Double, perCore: [Double]) {
-        // 占位：真实实现在 core-agent 的实现里
-        (0, 0, 0, 1, Array(repeating: 0, count: max(coreCount, 0)))
-    }
-}
-
-public enum NetworkRateMath {
-    public static func bytesPerSecond(previous: UInt64, current: UInt64, interval: TimeInterval) -> Double {
-        guard interval > 0, current >= previous else { return 0 }
-        return Double(current - previous) / interval
-    }
-}
-
-// MARK: - 采样器
-
-/// 线程安全。首次 `sample()`（或 `reset()` 之后）只建立基线，增量指标返回 0。
-public final class SystemMonitor: @unchecked Sendable {
-    public init(configuration: MonitorConfiguration = .init()) {
-        self.configuration = configuration
-    }
-
-    public var configuration: MonitorConfiguration
-
-    public var coreCount: Int { ProcessInfo.processInfo.processorCount }
-
-    public func sample() -> SystemSnapshot {
-        // 占位：真实实现在 core-agent 的实现里
-        let mem = MemoryStats(total: ProcessInfo.processInfo.physicalMemory, used: 0, free: 0,
-                              active: 0, inactive: 0, wired: 0, compressed: 0, cached: 0,
-                              swapTotal: 0, swapUsed: 0)
-        return SystemSnapshot(
-            timestamp: Date(),
-            cpu: CPUStats(total: 0, user: 0, system: 0, idle: 1, perCore: [], coreCount: coreCount,
-                          load1: 0, load5: 0, load15: 0),
-            memory: mem,
-            gpu: GPUStats(name: nil, utilization: nil, inUseMemory: nil, allocatedMemory: nil),
-            network: NetworkStats(download: 0, upload: 0, received: 0, sent: 0,
-                                  interfaceName: nil, isConnected: false),
-            disk: nil,
-            uptime: ProcessInfo.processInfo.systemUptime,
-            thermalState: ProcessInfo.processInfo.thermalState,
-            sampleIndex: 0
-        )
-    }
-
-    public func reset() {}
 }

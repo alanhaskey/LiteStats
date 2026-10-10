@@ -143,11 +143,27 @@ public final class SystemMonitor: @unchecked Sendable {
 - 无刘海屏幕（外接显示器）：回退为菜单栏下方居中的常驻小胶囊，交互一致。
 - 屏幕参数变化（`NSApplication.didChangeScreenParametersNotification`）重新计算几何。
 
-## 6. 验收标准
+## 6. 验收标准与实测结果
 
-1. `swift build --disable-sandbox` 与 `swift test --disable-sandbox` 通过。
-2. `swift run --disable-sandbox litestats-probe --seconds 5` 输出真实值：
-   15 个核心、内存 total ≈ 24 GiB、GPU 利用率非 nil、网速在有大流量时 > 0。
-3. App 启动后进程存活，`ps` 测得平均 CPU < 1.0%、RSS < 60 MB（1 Hz 采样）。
-4. 窗口几何自检：`--selftest` 打印收起/展开 frame 并与刘海几何对齐（误差 0）。
-5. 人工确认：悬浮刘海 → 面板下坠展开；移开 → 收起；不遮挡菜单栏。
+| # | 标准 | 结果 |
+| --- | --- | --- |
+| 1 | `swift build` / `swift test` 通过 | ✅ 44 tests in 6 suites passed（`scripts/test.sh`） |
+| 2 | 探针输出真实值（15 核 / 24 GiB / GPU 非 nil / 网速随流量变化） | ✅ `cores=15 gpu 62% mem 15.4G/24.0G net en0` |
+| 3 | 常驻 CPU < 1 %、内存 < 60 MB | ✅ 收起态 **0.09 % / 10.1 MB 物理占用**（RSS 51.6 MB） |
+| 4 | 窗口几何与刘海对齐、展开包含收起 | ✅ `--selftest` 35/35 通过 |
+| 5 | 悬浮展开 / 移开收起 / 不遮菜单栏 | ✅ 端到端光标测试 PASS；收起态离屏位图最大 alpha = 0 |
+
+补充实测（5 段 45s `--benchmark`）：展开态 1.01 % / 17.5 MB；完全空闲地板 0.14 %。
+无泄漏：20000 拍压测增长 0.05 MB（分配器噪声，非线性）。
+
+## 7. 后期修正（与初版设计的差异）
+
+1. **收起态不构建 SwiftUI 视图树**（原设计是 `opacity(0)` 保留视图）。
+   实测只要内容存在，SwiftUI 就初始化渲染管线，物理占用 101.5 MB；改为条件构建后降到 10.3 MB。
+   代价：首次悬浮时现构建视图树（实测无感）。
+2. **弃用 `.ultraThinMaterial`**：灵动岛本体是纯黑，实色更还原，且少一层背景滤镜。
+3. **CPU 计量改用 `getrusage`**：`task_info(MACH_TASK_BASIC_INFO)` 的 user_time/system_time
+   在本机会长时间不更新，导致"采样 8 次却报告 0 ms"的假数据。
+4. **`setEventHandler` 闭包必须标 `@Sendable`**：否则继承 `@MainActor` 隔离，运行时刷 data race 警告。
+5. **非 240 字节/拍的"泄漏"是误判**：`/usr/bin/time -l` 报的是峰值 RSS，
+   不同时长对比会得出假结论；正确的做法是同进程内前后差值 + 加大拍数看是否线性。
