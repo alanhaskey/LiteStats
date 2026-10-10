@@ -16,7 +16,7 @@ macOS 原生轻量系统监控。**信息不占菜单栏、不进 Dock，全部�
 open "dist/LiteStats.app"       # 启动：常驻后台，无 Dock 图标
 ```
 
-当前版本 **1.0.0**。换图标：把 1024×1024 PNG 覆盖到 `Resources/AppIcon-1024.png`，跑 `./scripts/make-icon.sh`。
+当前版本 **1.0.1**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）。换图标：把 1024×1024 PNG 覆盖到 `Resources/AppIcon-1024.png`，跑 `./scripts/make-icon.sh`。
 
 > 图标有个坑：源图如果四周留了透明边距，macOS 26 会自动套一层**白色圆角底板**
 > （看起来像"图标里套图标"）。所以 `AppIcon-1024.png` 必须是**满画布**的：
@@ -405,3 +405,18 @@ E2E RESULT: PASS（展开 1 次 / 收起 1 次）
 - 历史数据导出（CSV / JSON）
 - GPU 温度（本机没有 GPU 专属传感器，`gpuTemperature` 保持 nil 而不是拿 CPU 温度冒充）
 - 正式签名与公证（目前 ad-hoc 签名，仅本机可用；要分发给别人需要开发者证书）
+
+## 发布
+
+```bash
+./scripts/build-app.sh release      # 干净编译并组装 dist/LiteStats.app
+./scripts/package-release.sh        # 打成 zip + dmg，并解压自检
+```
+
+版本号在 `Resources/Info.plist` 的 `CFBundleShortVersionString`（界面里的"版本"读的就是它）。
+更新记录写 [CHANGELOG.md](CHANGELOG.md)，发完记一次 `git tag v<版本>`。
+
+产物：`dist/LiteStats-<版本>.zip`、`dist/LiteStats-<版本>.dmg`、`dist/SHA256SUMS-<版本>.txt`。
+
+> 本机没有开发者证书，签名是 **ad-hoc**。别人下载后首次打开需要「右键 → 打开」，
+> 或者 `xattr -d com.apple.quarantine /Applications/LiteStats.app`。
