@@ -100,6 +100,32 @@ enum SelfTest {
         let narrow = ScreenGeometry.syntheticSlot(screenFrame: CGRect(x: 0, y: 0, width: 600, height: 800),
                                                   menuBarHeight: 24)
         check("圆槽：窄屏有最小宽度兜底", narrow.width >= 90, "\(narrow.width)")
+
+        // 圆槽宽度规则：中间是表情，两侧各按"黑耳长度"展开
+        func slotWidth(left: IndicatorMetric, right: IndicatorMetric, earWidth: CGFloat) -> CGFloat {
+            let prefs = Preferences(defaults: UserDefaults(suiteName: "litestats-selftest-slotwidth") ?? .standard)
+            prefs.leftIndicator = left
+            prefs.rightIndicator = right
+            prefs.earWidth = Double(earWidth)
+            let geo = ScreenGeometry(displayID: 99, name: "合成屏",
+                                     screenFrame: wide, visibleFrame: wide,
+                                     menuBarHeight: 38,
+                                     notchRect: ScreenGeometry.syntheticSlot(screenFrame: wide, menuBarHeight: 38),
+                                     hasPhysicalNotch: false, backingScale: 2)
+            return AppDelegate.standardLayout(geometry: geo, preferences: prefs).slotRect.width
+        }
+        let slotNone = slotWidth(left: .none, right: .none, earWidth: 88)
+        let slotLeft = slotWidth(left: .cpu, right: .none, earWidth: 88)
+        let slotBoth = slotWidth(left: .cpu, right: .temperature, earWidth: 88)
+        let slotBothWide = slotWidth(left: .cpu, right: .temperature, earWidth: 140)
+        info("圆槽宽度：无指标 \(Int(slotNone)) / 仅左 \(Int(slotLeft)) / 左右都有 \(Int(slotBoth)) / 黑耳 140pt 时 \(Int(slotBothWide))")
+        check("圆槽：两边都没指标时只剩表情那点宽度", slotNone < 40, "\(Int(slotNone))")
+        check("圆槽：只有左侧指标时 = 表情 + 一个黑耳长度",
+              abs(slotLeft - (slotNone + 88)) < 0.5, "\(Int(slotLeft))")
+        check("圆槽：左右都有 = 表情 + 两个黑耳长度",
+              abs(slotBoth - (slotNone + 176)) < 0.5, "\(Int(slotBoth))")
+        check("圆槽：黑耳长度设置会改变圆槽长度（140 > 88）",
+              slotBothWide - slotBoth > 100, "\(Int(slotBothWide)) vs \(Int(slotBoth))")
         let allGeometries = ScreenGeometry.all()
         check("每块屏幕都能算出几何", allGeometries.count == NSScreen.screens.count,
               "\(allGeometries.count) vs \(NSScreen.screens.count)")
@@ -619,6 +645,32 @@ enum SelfTest {
                       coverage < 0.35, String(format: "覆盖率 %.1f%%", coverage * 100))
             }
             slotController.stop()
+
+            // 另渲染一张"两边都没配指标"的最小圆槽（只有表情）
+            var minimalPrefsLayout = slotLayout
+            minimalPrefsLayout.leftEarActive = false
+            minimalPrefsLayout.rightEarActive = false
+            let minimalView = NotchIndicatorView(frame: CGRect(origin: .zero,
+                                                               size: minimalPrefsLayout.collapsedFrame.size))
+            // 必须挂进窗口：绘制时要用 window.frame 把全局坐标换算成窗口内坐标
+            let minimalWindow = NSWindow(contentRect: minimalPrefsLayout.collapsedFrame,
+                                         styleMask: [.borderless], backing: .buffered, defer: false)
+            minimalWindow.contentView = minimalView
+            minimalView.configure(layout: minimalPrefsLayout, leftMetric: .none, rightMetric: .none)
+            minimalView.update(snapshot: service.snapshot)
+            minimalView.setEarProgress(1, animated: false, duration: 0)
+            minimalView.display()
+            if let bitmap = minimalView.bitmapImageRepForCachingDisplay(in: minimalView.bounds) {
+                minimalView.cacheDisplay(in: minimalView.bounds, to: bitmap)
+                let coverage = alphaCoverage(bitmap,
+                                             region: CGRect(origin: .zero, size: minimalPrefsLayout.collapsedFrame.size),
+                                             scale: 1)
+                check("最小圆槽（只有表情）也渲染出内容", coverage > 0.3,
+                      String(format: "%.0f×%.0fpt 覆盖率 %.1f%%",
+                             minimalPrefsLayout.collapsedFrame.width,
+                             minimalPrefsLayout.collapsedFrame.height, coverage * 100))
+                dump(bitmap, suffix: "slot-min")
+            }
 
             if let bitmap = slotView.bitmapImageRepForCachingDisplay(in: slotView.bounds) {
                 slotView.cacheDisplay(in: slotView.bounds, to: bitmap)

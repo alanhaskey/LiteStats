@@ -112,6 +112,9 @@ final class NotchIndicatorView: NSView {
     /// 无刘海屏：收起态画一颗常驻胶囊（圆槽），而不是左右两只黑耳
     private var usesSlot = false
     private var slotGlobalRect: CGRect = .zero
+    private var slotCenterWidth: CGFloat = 32
+    private var slotLeftWidth: CGFloat = 0
+    private var slotRightWidth: CGFloat = 0
     /// 菜单栏带高度：耳朵必须按这个算高度，**不能用 bounds.height**
     /// —— 窗口展开后 bounds 会变成 294pt，耳朵会被拉成一根长条。
     private var bandHeight: CGFloat = 39
@@ -136,6 +139,9 @@ final class NotchIndicatorView: NSView {
         notchGlobalRect = layout.geometry.notchRect
         usesSlot = layout.usesSlot
         slotGlobalRect = layout.usesSlot ? layout.slotRect : .zero
+        slotCenterWidth = layout.slotCenterWidth
+        slotLeftWidth = layout.slotLeftWidth
+        slotRightWidth = layout.slotRightWidth
         needsDisplay = true
     }
 
@@ -210,30 +216,29 @@ final class NotchIndicatorView: NSView {
 
         let slotAlpha = textAlpha * earProgress
         guard slotAlpha > 0.02 else { return }
-        NSGraphicsContext.saveGraphicsState()
-        NSBezierPath(rect: rect.insetBy(dx: 3, dy: 0)).addClip()
 
-        // 三块内容按顺序横排并整体居中
-        var parts: [NSAttributedString] = []
-        if let left = attributedString(for: leftMetric) { parts.append(left) }
-        parts.append(slotCenterText())
-        if let right = attributedString(for: rightMetric) { parts.append(right) }
-
-        let gap = NSAttributedString(string: "  ", attributes: [.font: NSFont.systemFont(ofSize: 10)])
-        let joined = NSMutableAttributedString()
-        for (index, part) in parts.enumerated() {
-            if index > 0 { joined.append(gap) }
-            joined.append(part)
+        // 三段式：`[左指标] 表情 [右指标]`，分段宽度直接用几何层算好的值
+        // （有指标那一段 = 黑耳长度），各段内部居中 —— 表情永远在圆槽正中。
+        if slotLeftWidth > 1, let left = attributedString(for: leftMetric) {
+            drawCentered(left, in: CGRect(x: rect.minX, y: rect.minY,
+                                          width: slotLeftWidth, height: rect.height), alpha: slotAlpha)
         }
-        let alphaApplied = fading(joined, alpha: slotAlpha)
-        let size = alphaApplied.size()
-        let origin = CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2)
-        alphaApplied.draw(at: origin)
-        NSGraphicsContext.restoreGraphicsState()
+        if slotRightWidth > 1, let right = attributedString(for: rightMetric) {
+            drawCentered(right, in: CGRect(x: rect.maxX - slotRightWidth, y: rect.minY,
+                                           width: slotRightWidth, height: rect.height), alpha: slotAlpha)
+        }
+        drawCentered(slotFaceText(), in: rect, alpha: slotAlpha)
     }
 
-    /// 圆槽中间那块：随负载变脸的表情（+ CPU 百分比，但左右已经显示了 CPU 就不重复）
-    private func slotCenterText() -> NSAttributedString {
+    /// 在一段的中间画一段文字
+    private func drawCentered(_ text: NSAttributedString, in rect: CGRect, alpha: CGFloat) {
+        let faded = fading(text, alpha: alpha)
+        let size = faded.size()
+        faded.draw(at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
+    }
+
+    /// 圆槽中间那块：只有一张随负载变脸的表情（两侧指标各管自己的数据）
+    private func slotFaceText() -> NSAttributedString {
         let usage = snapshot?.cpu.total ?? 0
         let face: String
         switch usage {
@@ -242,18 +247,9 @@ final class NotchIndicatorView: NSView {
         case ..<0.75: face = "😅"
         default: face = "🔥"
         }
-        let text = NSMutableAttributedString()
-        text.append(NSAttributedString(string: face, attributes: [
-            .font: NSFont.systemFont(ofSize: 13),
-        ]))
-        let cpuAlreadyShown = leftMetric == .cpu || rightMetric == .cpu
-        if !cpuAlreadyShown, snapshot != nil {
-            text.append(NSAttributedString(string: " " + Fmt.percentInt(usage) + "%", attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
-                .foregroundColor: IndicatorPalette.cpu(usage),
-            ]))
-        }
-        return text
+        return NSAttributedString(string: face, attributes: [
+            .font: NSFont.systemFont(ofSize: 12),
+        ])
     }
 
     /// 按段各自乘上淡出系数（保留原配色）

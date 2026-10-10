@@ -129,21 +129,25 @@ struct PanelLayout: Equatable {
     /// 面板体底部圆角
     var cornerRadius: CGFloat = 20
 
-    /// 无刘海屏上那颗常驻圆槽的尺寸
-    var slotSize = CGSize(width: 92, height: 26)
+    /// 无刘海屏上那颗常驻圆槽：中间"表情"那块的基础宽度 + 高度
+    var slotCenterWidth: CGFloat = 32
+    var slotHeight: CGFloat = 26
 
     /// 是否是无刘海屏（用圆槽而不是物理刘海）
     var usesSlot: Bool { !geometry.hasPhysicalNotch }
 
-    /// 无刘海屏：收起态就是这颗圆槽。宽度按"表情 + 实际配了哪些指示条"算，
-    /// 不留一大块空黑（不做成耳朵那种固定宽度）。
+    /// 圆槽左右两段的宽度：有指标的那一侧 = **黑耳长度**（和物理刘海屏的黑耳同一个设置），
+    /// 没有指标就是 0。所以"黑耳长度"同样决定圆槽有多长。
+    var slotLeftWidth: CGFloat { leftEarActive ? earWidth : 0 }
+    var slotRightWidth: CGFloat { rightEarActive ? earWidth : 0 }
+
+    /// 无刘海屏：收起态就是这颗圆槽。三段式 `[左指标] 表情 [右指标]`：
+    /// 两边都没配指标时只剩中间那颗表情。
     var slotRect: CGRect {
-        var width = slotSize.width                 // 基础宽度：表情（+ 没侧边指标时的 CPU%）
-        if leftEarActive { width += 54 }
-        if rightEarActive { width += 54 }
+        let width = slotCenterWidth + slotLeftWidth + slotRightWidth
         return CGRect(x: geometry.notchRect.midX - width / 2,
                       y: geometry.notchRect.minY,
-                      width: width, height: geometry.notchRect.height)
+                      width: width, height: slotHeight)
     }
 
     /// 顶部菜单栏带高度：岛颈就画在这一带里
