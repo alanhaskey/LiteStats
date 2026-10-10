@@ -265,33 +265,29 @@ struct HistoryView: View {
             }
         }
 
-        // 多日：按天聚合
-        var groups: [Date: (Double, String)] = [:]
-        for hour in s.hourly {
-            let key = calendar.startOfDay(for: hour.hourStart)
-            let value = chartMetric.value(of: hour)
-            groups[key] = ((groups[key]?.0 ?? 0) + value, chartMetric.formatBucket(value))
-        }
-        let sorted = groups.sorted { $0.key < $1.key }
-        guard let maxValue = sorted.map(\.value.0).max(), maxValue > 0 else { return [] }
-        let peakKey = sorted.max { $0.value.0 < $1.value.0 }?.key
-        return sorted.map { key, pair in
-            Bucket(label: "\(calendar.component(.day, from: key))",
-                   date: key,
-                   value: min(1, pair.0 / maxValue),
-                   rawText: pair.1,
-                   isPeak: key == peakKey)
+        // 多日：按天汇总（纯函数，便于单测）
+        let days = HistoryChartData.dailyTotals(hourly: s.hourly, metric: chartMetric)
+        guard let maxValue = days.map(\.total).max(), maxValue > 0 else { return [] }
+        let peakDay = days.max { $0.total < $1.total }?.date
+        return days.map { day in
+            Bucket(label: "\(calendar.component(.day, from: day.date))",
+                   date: day.date,
+                   value: min(1, day.total / maxValue),
+                   // ⚠️ 必须是当天的**总量**：早期版本这里取了当天最后一个小时的值（字面上只更新没累加）
+                   rawText: chartMetric.formatBucket(day.total),
+                   isPeak: day.date == peakDay)
         }
     }
 
     private var peakBucket: Bucket? { buckets.first { $0.isPeak } }
 
-    private func hourLabel(_ label: String) -> String { "\(label):00" }
+    /// 悬浮气泡 / 峰值那行的标题：单日按钟点，多日按月日（别把 "10 号" 写成 "10:00"）
+    private func tooltipTitle(_ bucket: Bucket) -> String {
+        HistoryChartData.tooltipTitle(label: bucket.label, date: bucket.date, isSingleDay: isSingleDay)
+    }
 
     private func peakLabel(_ bucket: Bucket) -> String {
-        isSingleDay
-            ? "\(bucket.label):00 时段"
-            : "\(Calendar.current.component(.month, from: bucket.date)) 月 \(bucket.label) 日"
+        isSingleDay ? "\(tooltipTitle(bucket)) 时段" : tooltipTitle(bucket)
     }
 
     private func drawChart(context: GraphicsContext, size: CGSize) {
@@ -338,7 +334,7 @@ struct HistoryView: View {
         if let hovered {
             let item = items[hovered]
             let centerX = inset + slot * CGFloat(hovered) + slot / 2
-            let label = "\(hourLabel(item.label)) · \(item.rawText)"
+            let label = "\(tooltipTitle(item)) · \(item.rawText)"
             let text = context.resolve(Text(label)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.white))
@@ -511,6 +507,23 @@ enum HistoryChartData {
         let isEmpty: Bool
     }
 
+    struct DayTotal: Equatable {
+        let date: Date      // 当天 00:00
+        let total: Double
+    }
+
+    /// 多日视图：把小时桶按"天"汇总，按日期升序。
+    /// 注意是**汇总**（同一天所有小时相加），不是取最后一个小时。
+    static func dailyTotals(hourly: [HourlyBucket], metric: HistoryMetric,
+                            calendar: Calendar = .current) -> [DayTotal] {
+        var sums: [Date: Double] = [:]
+        for bucket in hourly {
+            let day = calendar.startOfDay(for: bucket.hourStart)
+            sums[day, default: 0] += metric.value(of: bucket)
+        }
+        return sums.keys.sorted().map { DayTotal(date: $0, total: sums[$0] ?? 0) }
+    }
+
     /// 单日：**恒定返回 24 个槽位**（00…23）。没有记录的小时也占位（isEmpty = true），
     /// 这样柱子位置稳定、可以直接对着钟点看。
     static func singleDaySlots(hourly: [HourlyBucket], metric: HistoryMetric) -> [HourSlot] {
@@ -531,6 +544,19 @@ enum HistoryChartData {
                             isPeak: value != nil && hour == peakHour && maxValue > 0,
                             isEmpty: value == nil)
         }
+    }
+}
+
+/// 图表数据的纯计算部分（可单测）
+extension HistoryChartData {
+    /// 悬浮气泡与峰值行的标题。
+    /// - 单日（今天 / 某一天）：小时桶 → "17:00"
+    /// - 多日（近 7 天 / 本月）：天桶 → "10 月 10 日"（早期版本一律加 ":00"，把 10 号显示成了 10:00）
+    static func tooltipTitle(label: String, date: Date, isSingleDay: Bool,
+                             calendar: Calendar = .current) -> String {
+        guard !isSingleDay else { return "\(label):00" }
+        let parts = calendar.dateComponents([.month, .day], from: date)
+        return "\(parts.month ?? 0) 月 \(parts.day ?? 0) 日"
     }
 }
 

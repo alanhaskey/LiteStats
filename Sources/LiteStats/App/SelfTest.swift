@@ -473,6 +473,73 @@ enum SelfTest {
             check("日历：能构造测试月份", false)
         }
 
+        // 多日视图：悬浮标题与"当天总量"
+        let calendar = Calendar.current
+        func day(_ month: Int, _ dayOfMonth: Int, hour: Int) -> Date? {
+            calendar.date(from: DateComponents(year: 2026, month: month, day: dayOfMonth, hour: hour))
+        }
+        if let d10 = day(10, 10, hour: 9), let d10b = day(10, 10, hour: 15),
+           let d11 = day(10, 11, hour: 9) {
+            func bucket(_ date: Date, cpu: Double, net: UInt64) -> HourlyBucket {
+                HourlyBucket(hourStart: date, cpuSeconds: cpu, gpuPercentAverage: 0,
+                             memoryBytesAverage: 0, networkIn: net, networkOut: 0, sampleCount: 30)
+            }
+            let hourly = [bucket(d10, cpu: 100, net: 1_000_000),
+                          bucket(d10b, cpu: 300, net: 2_000_000),
+                          bucket(d11, cpu: 50, net: 500_000)]
+
+            // 标题：单日按钟点、多日按月日（用户反馈过"10 号显示成 10:00"）
+            check("多日悬浮标题按月日（不是 10:00）",
+                  HistoryChartData.tooltipTitle(label: "10", date: d10, isSingleDay: false) == "10 月 10 日",
+                  HistoryChartData.tooltipTitle(label: "10", date: d10, isSingleDay: false))
+            check("单日悬浮标题按钟点",
+                  HistoryChartData.tooltipTitle(label: "17", date: d10, isSingleDay: true) == "17:00",
+                  HistoryChartData.tooltipTitle(label: "17", date: d10, isSingleDay: true))
+
+            // 汇总：10 号 = 9 点 + 15 点 两个桶相加，11 号 单独一天
+            let cpuDays = HistoryChartData.dailyTotals(hourly: hourly, metric: .cpu)
+            let netDays = HistoryChartData.dailyTotals(hourly: hourly, metric: .network)
+            info("多日汇总（CPU）：" + cpuDays.map { "\(calendar.component(.day, from: $0.date))日=\(Int($0.total))" }.joined(separator: " "))
+            check("多日视图按天分组（3 个小时桶 → 2 天）", cpuDays.count == 2, "\(cpuDays.count) 天")
+            check("多日视图取的是当天总量（10 号 = 100 + 300）",
+                  cpuDays.first.map { abs($0.total - 400) < 0.001 } ?? false,
+                  String(describing: cpuDays.first?.total))
+            check("多日视图不丢小时（11 号 = 50）",
+                  cpuDays.last.map { abs($0.total - 50) < 0.001 } ?? false,
+                  String(describing: cpuDays.last?.total))
+            check("多日视图的流量同样按天汇总（10 号 = 3MB）",
+                  netDays.first.map { $0.total == 3_000_000 } ?? false,
+                  String(describing: netDays.first?.total))
+        } else {
+            check("能构造多日测试数据", false)
+        }
+
+        // 核心柱状图：面板宽度固定，只有柱宽随核心数变化
+        let panelWidth = Theme.panelWidth - Theme.padding * 2
+        var widths: [Int: CGFloat] = [:]
+        for coreCount in [6, 8, 10, 12, 15, 18, 24, 32] {
+            let spacing = CoreGridLayout.spacing(coreCount: coreCount)
+            let width = CoreGridLayout.columnWidth(coreCount: coreCount, width: panelWidth,
+                                                   spacing: spacing)
+            widths[coreCount] = width
+            // 所有柱子 + 间距必须正好填满内容宽度，不能溢出
+            let used = width * CGFloat(coreCount) + spacing * CGFloat(coreCount - 1)
+            check("核心 \(coreCount) 核：柱子总宽不超出面板",
+                  used <= panelWidth + 0.01 && width >= 1,
+                  String(format: "柱宽 %.1fpt，占用 %.1f/%.1fpt", width, used, panelWidth))
+        }
+        info("柱宽随核心数变化：" + [6, 8, 10, 15, 24, 32].map {
+            "\($0)核=\(String(format: "%.1f", widths[$0] ?? 0))pt"
+        }.joined(separator: " "))
+        check("核数越多柱越细（不换行、不改窗口宽度）",
+              (widths[6] ?? 0) > (widths[15] ?? 0) && (widths[15] ?? 0) > (widths[32] ?? 0),
+              "6核 \(Int(widths[6] ?? 0))pt > 15核 \(Int(widths[15] ?? 0))pt > 32核 \(Int(widths[32] ?? 0))pt")
+        check("15 核（本机）保留百分比数字", CoreGridLayout.showsLabels(columnWidth: widths[15] ?? 0))
+        check("24 / 32 核自动隐藏数字（列宽不够，避免糊成一团）",
+              !CoreGridLayout.showsLabels(columnWidth: widths[24] ?? 0)
+              && !CoreGridLayout.showsLabels(columnWidth: widths[32] ?? 0),
+              String(format: "24核 %.1fpt / 32核 %.1fpt", widths[24] ?? 0, widths[32] ?? 0))
+
         // 图表 24 槽位（纯函数）
         let emptySlots = HistoryChartData.singleDaySlots(hourly: [], metric: .cpu)
         check("今日时段图固定 24 个槽位（没有数据时也占位）",

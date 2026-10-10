@@ -1,6 +1,31 @@
 import LiteStatsCore
 import SwiftUI
 
+/// 每核心柱状图的几何（纯函数，便于按不同核心数单测）。
+///
+/// 面板宽度是固定的（`Theme.panelWidth`），所以适配不同机型时**只改柱宽、不改窗口宽度**。
+enum CoreGridLayout {
+    /// 每根柱子的高度（画百分比数字时）
+    static let barHeight: CGFloat = 22
+    /// 数字需要的列宽：font 8 的等宽数字，3 位数（"100"）约 15pt
+    static let labelMinColumnWidth: CGFloat = 15.5
+
+    /// 核数多时把间距收紧一点，给柱子多留点宽度
+    static func spacing(coreCount: Int) -> CGFloat {
+        coreCount >= 20 ? 2 : 3
+    }
+
+    static func columnWidth(coreCount: Int, width: CGFloat, spacing: CGFloat? = nil) -> CGFloat {
+        let count = max(coreCount, 1)
+        let gap = spacing ?? self.spacing(coreCount: count)
+        return max(1, (width - gap * CGFloat(count - 1)) / CGFloat(count))
+    }
+
+    static func showsLabels(columnWidth: CGFloat) -> Bool {
+        columnWidth >= labelMinColumnWidth
+    }
+}
+
 /// 面板正文：CPU 概览 + 每核心占用 + GPU/内存/网络 + 温度/风扇 + 磁盘/开机时长页脚。
 ///
 /// 高度是硬约束（`Theme.bodyHeight`），所有区块都给固定高度，
@@ -146,9 +171,16 @@ struct MetricsContent: View {
         let usages = coreUsages
         return Canvas { context, size in
             let count = max(usages.count, 1)
-            let spacing: CGFloat = 3
-            let columnWidth = max(1, (size.width - spacing * CGFloat(count - 1)) / CGFloat(count))
-            let barHeight: CGFloat = 22
+            // 面板宽度固定 400pt，核心数变化只影响**每根柱子的宽度**（见 CoreGridLayout）。
+            // 8 核时一根 45pt，15 核 22.8pt，32 核 9.1pt —— 窗口宽度始终不变。
+            let spacing = CoreGridLayout.spacing(coreCount: count)
+            let columnWidth = CoreGridLayout.columnWidth(coreCount: count, width: size.width,
+                                                          spacing: spacing)
+            // 列宽不够就**不画百分比数字**：24/32 核的机型上两位数会挤成一团，
+            // 此时把数字让出来的高度给柱子，信息反而更清楚。
+            let showsLabels = CoreGridLayout.showsLabels(columnWidth: columnWidth)
+            let barHeight = showsLabels ? CoreGridLayout.barHeight : size.height - 1
+
             for (index, usage) in usages.enumerated() {
                 let clamped = min(max(usage, 0), 1)
                 let x = CGFloat(index) * (columnWidth + spacing)
@@ -160,6 +192,7 @@ struct MetricsContent: View {
                 let bar = CGRect(x: x, y: barHeight - filled, width: columnWidth, height: filled)
                 context.fill(Path(roundedRect: bar, cornerRadius: 2), with: .color(Theme.cpu(clamped)))
 
+                guard showsLabels else { continue }
                 let label = context.resolve(
                     Text(Fmt.percentInt(clamped))
                         .font(.system(size: 8, weight: .medium))
