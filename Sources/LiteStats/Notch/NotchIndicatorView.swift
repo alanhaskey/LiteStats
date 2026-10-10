@@ -217,24 +217,35 @@ final class NotchIndicatorView: NSView {
         let slotAlpha = textAlpha * earProgress
         guard slotAlpha > 0.02 else { return }
 
-        // 三段式：`[左指标] 表情 [右指标]`，分段宽度直接用几何层算好的值
-        // （有指标那一段 = 黑耳长度），各段内部居中 —— 表情永远在圆槽正中。
+        // 三段式：`[左指标] 表情 [右指标]`。三段各自在自己那一段里居中，并且**各段裁剪**：
+        // 表情必须画在"中间那一段"的正中，不能画在整颗圆槽的正中 ——
+        // 只配一侧时两者不是同一个位置，会把表情和指标压在一起。
+        let leftSection = CGRect(x: rect.minX, y: rect.minY,
+                                 width: slotLeftWidth, height: rect.height)
+        let rightSection = CGRect(x: rect.maxX - slotRightWidth, y: rect.minY,
+                                  width: slotRightWidth, height: rect.height)
+        let centerSection = CGRect(x: rect.minX + slotLeftWidth, y: rect.minY,
+                                   width: max(1, rect.width - slotLeftWidth - slotRightWidth),
+                                   height: rect.height)
+
         if slotLeftWidth > 1, let left = attributedString(for: leftMetric) {
-            drawCentered(left, in: CGRect(x: rect.minX, y: rect.minY,
-                                          width: slotLeftWidth, height: rect.height), alpha: slotAlpha)
+            drawCentered(left, in: leftSection, alpha: slotAlpha)
         }
         if slotRightWidth > 1, let right = attributedString(for: rightMetric) {
-            drawCentered(right, in: CGRect(x: rect.maxX - slotRightWidth, y: rect.minY,
-                                           width: slotRightWidth, height: rect.height), alpha: slotAlpha)
+            drawCentered(right, in: rightSection, alpha: slotAlpha)
         }
-        drawCentered(slotFaceText(), in: rect, alpha: slotAlpha)
+        drawCentered(slotFaceText(), in: centerSection, alpha: slotAlpha)
     }
 
-    /// 在一段的中间画一段文字
+    /// 在一段的中间画一段文字。**裁剪到这一段**：指标文字偏长时宁可截断，
+    /// 也不能越过边界压到旁边的表情上（"黑耳长度"可以调到很小）。
     private func drawCentered(_ text: NSAttributedString, in rect: CGRect, alpha: CGFloat) {
         let faded = fading(text, alpha: alpha)
         let size = faded.size()
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: rect).addClip()
         faded.draw(at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     /// 圆槽中间那块：只有一张随负载变脸的表情（两侧指标各管自己的数据）

@@ -646,6 +646,68 @@ enum SelfTest {
             }
             slotController.stop()
 
+            // 只配一侧时的圆槽：早期版本表情画在整颗圆槽正中、指标画在自己那段正中，
+            // 两者会压在一起（用户反馈）。这里专门渲染并检查"表情与指标不重叠"。
+            var leftOnlyLayout = slotLayout
+            leftOnlyLayout.rightEarActive = false
+            leftOnlyLayout.leftEarActive = true
+            let leftOnlyView = NotchIndicatorView(frame: CGRect(origin: .zero,
+                                                                size: leftOnlyLayout.collapsedFrame.size))
+            let leftOnlyWindow = NSWindow(contentRect: leftOnlyLayout.collapsedFrame,
+                                          styleMask: [.borderless], backing: .buffered, defer: false)
+            leftOnlyWindow.contentView = leftOnlyView
+            leftOnlyView.configure(layout: leftOnlyLayout, leftMetric: .cpu, rightMetric: .none)
+            leftOnlyView.update(snapshot: service.snapshot)
+            leftOnlyView.setEarProgress(1, animated: false, duration: 0)
+            leftOnlyView.display()
+            if let bitmap = leftOnlyView.bitmapImageRepForCachingDisplay(in: leftOnlyView.bounds) {
+                leftOnlyView.cacheDisplay(in: leftOnlyView.bounds, to: bitmap)
+                dump(bitmap, suffix: "slot-leftonly")
+                // 判据：整颗圆槽里"亮像素"的列应当分成**两段**（左边指标文字、右边表情），
+                // 中间有明显间隙。表情若被画在整颗圆槽正中（旧实现），两段会粘成一段。
+                let scale = CGFloat(bitmap.pixelsWide) / max(leftOnlyLayout.collapsedFrame.width, 1)
+                var bright: [Bool] = []
+                if let data = bitmap.bitmapData {
+                    let spp = max(bitmap.samplesPerPixel, 1)
+                    let alpha = alphaIndex(bitmap) ?? (spp - 1)
+                    for x in 0..<bitmap.pixelsWide {
+                        var isBright = false
+                        for y in 0..<bitmap.pixelsHigh {
+                            let pixel = data + y * bitmap.bytesPerRow + x * spp
+                            guard Int(pixel[alpha]) > 128 else { continue }
+                            if (Int(pixel[0]) + Int(pixel[1]) + Int(pixel[2])) / 3 > 110 { isBright = true; break }
+                        }
+                        bright.append(isBright)
+                    }
+                }
+                // 亮列分段（"CPU 0%" 的每个字形都是一段，所以不能用段数当判据）
+                var runs: [(Int, Int)] = []
+                var runStart: Int? = nil
+                var gap = 0
+                for (x, on) in bright.enumerated() {
+                    if on {
+                        if runStart == nil { runStart = x }
+                        gap = 0
+                    } else if let s0 = runStart {
+                        gap += 1
+                        if gap > 2 {
+                            runs.append((s0, x - gap))
+                            runStart = nil
+                            gap = 0
+                        }
+                    }
+                }
+                if let s0 = runStart { runs.append((s0, bright.count - 1)) }
+                // 判据：最右边那一段是表情，它与左边文字簇之间必须留出足够间隙。
+                // 旧实现把表情画在整颗圆槽正中，会直接落进文字簇里，这个间隙就没了。
+                let gapBeforeFace = runs.count >= 2 ? runs[runs.count - 1].0 - runs[runs.count - 2].1 : 0
+                info("单侧圆槽：亮列 \(runs.count) 段，表情前间隙 \(gapBeforeFace)px（=\(Int(Double(gapBeforeFace) / Double(scale)))pt，scale \(scale)）")
+                check("单侧圆槽：表情与左边指标之间留有间隙（不会叠在一起）",
+                      runs.count >= 2 && Double(gapBeforeFace) / Double(scale) >= 8,
+                      "间隙 \(Int(Double(gapBeforeFace) / Double(scale)))pt")
+                info("单侧圆槽宽度 \(Int(leftOnlyLayout.slotRect.width))pt（左 \(Int(leftOnlyLayout.slotLeftWidth)) + 中 \(Int(leftOnlyLayout.slotCenterWidth))）")
+            }
+
             // 另渲染一张"两边都没配指标"的最小圆槽（只有表情）
             var minimalPrefsLayout = slotLayout
             minimalPrefsLayout.leftEarActive = false
