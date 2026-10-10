@@ -159,6 +159,17 @@ struct PanelLayout: Equatable {
         return CGRect(x: left, y: 0, width: max(0, right - left), height: bandHeight)
     }
 
+    /// 物理刘海的底边比菜单栏底边高出的量（本机 39 - 38 = 1pt）。
+    /// 收起态的黑耳要和物理刘海"无缝连成一体"，所以它的底边必须贴齐**刘海**底边，
+    /// 而不是菜单栏底边；否则会多出一条 1pt 的错台。
+    var notchBottomInset: CGFloat {
+        guard let notch = geometry.notchRect, !isFallback else { return 0 }
+        return max(0, bandHeight - notch.height)
+    }
+
+    /// 物理刘海底部圆角半径。系统没有 API 能读到，按机型取经验值 10pt。
+    var notchCornerRadius: CGFloat { geometry.hasNotch ? 10 : 0 }
+
     /// SwiftUI 绘制用：展开窗口内（左上原点）的**物理刘海**矩形。
     /// 形变动画的起点就是它 —— progress = 0 时轮廓与物理刘海完全重合，所以"完全收入灵动岛"。
     var notchRect: CGRect {

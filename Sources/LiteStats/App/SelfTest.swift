@@ -258,6 +258,42 @@ enum SelfTest {
             }
         }
         controller.stop()
+
+        // ── 动画过程验证：展开必须"长出来"，不能瞬间出现 ──
+        // 这是用户实际看到的那个 bug（收起有动效、展开是直接出现），所以要有断言守住：
+        // 在展开动画进行中连续采样离屏渲染，必须采到"尺寸介于刘海和成品之间"的中间帧。
+        let animated = NotchPanelController(layout: layout, service: service)
+        animated.hoverEnabled = false
+        animated.start()
+        animated.forceState(.collapsed, animated: false)
+        pump(0.3)
+
+        let growing = NotchPanelController(layout: layout, service: service)
+        growing.hoverEnabled = false
+        growing.start()
+        growing.forceState(.expanded, animated: true)
+        var heights: [CGFloat] = []
+        var timeline: [String] = []
+        let animationStart = Date()
+        for _ in 0..<14 {
+            pump(0.04)
+            if let bitmap = growing.renderContentBitmap(),
+               let bounds = alphaBounds(bitmap, scale: CGFloat(bitmap.pixelsWide) / max(layout.windowSize.width, 1)) {
+                heights.append(bounds.height)
+                timeline.append(String(format: "%.0fms:%d", Date().timeIntervalSince(animationStart) * 1000, Int(bounds.height)))
+            }
+        }
+        info("展开时间线 \(timeline.joined(separator: " "))")
+        pump(0.8)
+        let settled = growing.renderContentBitmap().flatMap {
+            alphaBounds($0, scale: CGFloat($0.pixelsWide) / max(layout.windowSize.width, 1))
+        }
+        info("展开动画采样到的高度序列：\(heights.map { Int($0) })（落定 \(settled.map { Int($0.height) } ?? -1)）")
+        let intermediates = heights.filter { $0 > layout.notchRect.height + 4 && $0 < (settled?.height ?? 0) - 6 }
+        check("展开动画确实有中间帧（不是瞬间出现）", intermediates.count >= 2,
+              "中间帧 \(intermediates.count) 个：\(intermediates.map { Int($0) })")
+        growing.stop()
+        animated.stop()
     }
 
     /// 常驻指示条验证：几何（黑耳放得下指示条、不越界/不覆盖刘海）+ 真实绘制 + 展开后自动隐藏
@@ -454,6 +490,26 @@ enum SelfTest {
             }
         }
         return total == 0 ? 0 : Double(opaque) / Double(total)
+    }
+
+    /// 非透明像素的包围盒（窗口内左上原点、点坐标）。用于判断"画出来的东西长到多大了"
+    private static func alphaBounds(_ bitmap: NSBitmapImageRep, scale: CGFloat,
+                                    threshold: UInt8 = 40) -> CGRect? {
+        guard let data = bitmap.bitmapData, let index = alphaIndex(bitmap) else { return nil }
+        let spp = max(bitmap.samplesPerPixel, 1)
+        var minX = bitmap.pixelsWide, minY = bitmap.pixelsHigh, maxX = -1, maxY = -1
+        for y in 0..<bitmap.pixelsHigh {
+            let row = data + y * bitmap.bytesPerRow
+            for x in 0..<bitmap.pixelsWide where row[x * spp + index] >= threshold {
+                if x < minX { minX = x }
+                if x > maxX { maxX = x }
+                if y < minY { minY = y }
+                if y > maxY { maxY = y }
+            }
+        }
+        guard maxX >= minX, maxY >= minY, scale > 0 else { return nil }
+        return CGRect(x: CGFloat(minX) / scale, y: CGFloat(minY) / scale,
+                      width: CGFloat(maxX - minX + 1) / scale, height: CGFloat(maxY - minY + 1) / scale)
     }
 
     private static func maxAlpha(_ bitmap: NSBitmapImageRep) -> Int {

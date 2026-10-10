@@ -192,13 +192,24 @@ final class NotchPanelController {
             panel.setFrame(layout.expandedFrame, display: true)
             container.frame = CGRect(origin: .zero, size: layout.expandedFrame.size)
             hosting.frame = container.bounds
+            // 先把视图以「进度 0」（与物理刘海完全重合、不可见）挂上去。
+            presentation.islandProgress = 0
             presentation.isContentMounted = true
             if animated {
-                // 形变用弹簧：岛颈先横向铺开、面板体随后坠下，落定时略微回弹
-                // （阻尼 0.72 + 响应 0.46 ≈ 苹果那种"液体落定"的手感）
-                withAnimation(.spring(response: expandAnimation, dampingFraction: 0.72)) {
-                    presentation.isExpanded = true
-                    presentation.islandProgress = 1
+                // ⚠️ 必须等一帧再启动动画：
+                // 如果在同一轮 runloop 里同时"挂载视图"和"把进度设成 1"，
+                // SwiftUI 首次渲染看到的就是终值，没有起始值可插值 → 表现为"直接出现"。
+                // 隔一次 main queue 让 SwiftUI 先用 p=0 渲染一帧，弹簧才有起点。
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, self.state == .expanded else { return }
+                        // 形变用弹簧：岛颈先横向铺开、面板体随后坠下，落定时略微回弹
+                        // （阻尼 0.72 + 响应 0.46 ≈ 苹果那种"液体落定"的手感）
+                        withAnimation(.spring(response: self.expandAnimation, dampingFraction: 0.72)) {
+                            self.presentation.isExpanded = true
+                            self.presentation.islandProgress = 1
+                        }
+                    }
                 }
             } else {
                 presentation.isExpanded = true

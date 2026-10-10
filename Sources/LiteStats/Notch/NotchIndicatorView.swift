@@ -46,6 +46,10 @@ final class NotchIndicatorView: NSView {
     private var rightMetric: IndicatorMetric = .none
     private var leftEarWidth: CGFloat = 0
     private var rightEarWidth: CGFloat = 0
+    /// 刘海底边相对菜单栏底边的抬高量（黑耳底边要贴齐刘海底边，否则出现 1pt 错台）
+    private var notchBottomInset: CGFloat = 0
+    /// 物理刘海的底部圆角半径，黑耳内侧要沿同一个弧走，才能"连成一体"
+    private var notchCornerRadius: CGFloat = 10
     private var snapshot: SystemSnapshot?
 
     /// 与外层容器一致：不翻转（原点左下）。绘制时按左下原点算。
@@ -61,6 +65,8 @@ final class NotchIndicatorView: NSView {
         // 仍然各多出一块黑边、看起来像被撑宽了 —— 与"完全收入灵动岛"的预期不符。
         leftEarWidth = (layout.isFallback || self.leftMetric == .none) ? 0 : layout.collapsedLeftExtent
         rightEarWidth = (layout.isFallback || self.rightMetric == .none) ? 0 : layout.collapsedRightExtent
+        notchBottomInset = layout.notchBottomInset
+        notchCornerRadius = layout.notchCornerRadius
         needsDisplay = true
     }
 
@@ -76,40 +82,65 @@ final class NotchIndicatorView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard bounds.width > 1, bounds.height > 1 else { return }
+        // 黑耳的底边贴齐物理刘海底边（不是菜单栏底边），高度就与刘海一致
+        let earHeight = max(1, bounds.height - notchBottomInset)
+        let earY = notchBottomInset
+
         if leftEarWidth > 0 {
-            let rect = CGRect(x: 0, y: 0, width: leftEarWidth, height: bounds.height)
-            drawEar(rect, roundedCorner: .bottomLeft)
+            let rect = CGRect(x: 0, y: earY, width: leftEarWidth, height: earHeight)
+            drawEar(rect, side: .left)
             drawMetric(leftMetric, in: rect, alignment: .right)
         }
         if rightEarWidth > 0 {
-            let rect = CGRect(x: bounds.width - rightEarWidth, y: 0, width: rightEarWidth, height: bounds.height)
-            drawEar(rect, roundedCorner: .bottomRight)
+            let rect = CGRect(x: bounds.width - rightEarWidth, y: earY,
+                              width: rightEarWidth, height: earHeight)
+            drawEar(rect, side: .right)
             drawMetric(rightMetric, in: rect, alignment: .left)
         }
     }
 
-    private enum RoundedCorner { case bottomLeft, bottomRight }
+    private enum EarSide { case left, right }
 
-    /// 画一块黑耳：外侧下角圆角、内侧贴齐物理刘海（保持刘海本身的轮廓）
-    private func drawEar(_ rect: CGRect, roundedCorner: RoundedCorner) {
-        let radius: CGFloat = 10
+    /// 画一块黑耳。
+    ///
+    /// 关键：内侧不能简单地切成直角，否则会和物理刘海的底部圆角之间漏出一道壁纸缝
+    /// （看起来"指示条和灵动岛是分离的"）。这里让内侧沿着**刘海同一个圆角弧**走，
+    /// 并且把底边多画过去一个圆角半径，正好补上刘海圆角外侧那块楔形区域 ——
+    /// 视觉上就是刘海本身变宽了。
+    private func drawEar(_ rect: CGRect, side: EarSide) {
+        let radius = min(notchCornerRadius, rect.width, rect.height / 2)
+        guard radius > 0.5 else {
+            IndicatorPalette.earFill.setFill()
+            NSBezierPath(rect: rect).fill()
+            return
+        }
+        let bottom = rect.minY
+        let top = rect.maxY
         let path = NSBezierPath()
-        switch roundedCorner {
-        case .bottomLeft:
-            path.move(to: CGPoint(x: rect.minX + radius, y: rect.minY))
-            path.line(to: CGPoint(x: rect.maxX, y: rect.minY))
-            path.line(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            path.line(to: CGPoint(x: rect.minX, y: rect.maxY))
-            path.line(to: CGPoint(x: rect.minX, y: rect.minY + radius))
-            path.appendArc(withCenter: CGPoint(x: rect.minX + radius, y: rect.minY + radius),
+
+        switch side {
+        case .left:
+            let outer = rect.minX
+            let inner = rect.maxX
+            path.move(to: CGPoint(x: outer, y: top))
+            path.line(to: CGPoint(x: outer, y: bottom + radius))
+            path.appendArc(withCenter: CGPoint(x: outer + radius, y: bottom + radius),
                            radius: radius, startAngle: 180, endAngle: 270)
-        case .bottomRight:
-            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-            path.line(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
-            path.appendArc(withCenter: CGPoint(x: rect.maxX - radius, y: rect.minY + radius),
+            path.line(to: CGPoint(x: inner + radius, y: bottom))
+            path.appendArc(withCenter: CGPoint(x: inner + radius, y: bottom + radius),
+                           radius: radius, startAngle: 270, endAngle: 180, clockwise: true)
+            path.line(to: CGPoint(x: inner, y: top))
+        case .right:
+            let outer = rect.maxX
+            let inner = rect.minX
+            path.move(to: CGPoint(x: outer, y: top))
+            path.line(to: CGPoint(x: outer, y: bottom + radius))
+            path.appendArc(withCenter: CGPoint(x: outer - radius, y: bottom + radius),
+                           radius: radius, startAngle: 0, endAngle: 270, clockwise: true)
+            path.line(to: CGPoint(x: inner - radius, y: bottom))
+            path.appendArc(withCenter: CGPoint(x: inner - radius, y: bottom + radius),
                            radius: radius, startAngle: 270, endAngle: 360)
-            path.line(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            path.line(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.line(to: CGPoint(x: inner, y: top))
         }
         path.close()
         IndicatorPalette.earFill.setFill()
