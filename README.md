@@ -1,482 +1,88 @@
 # LiteStats
 
-<img src="docs/images/icon.png" width="110" align="right" alt="LiteStats 图标" />
+<img src="docs/images/icon.png" width="110" align="right" alt="LiteStats icon" />
 
-![平台](https://img.shields.io/badge/platform-macOS%2014%2B-black)
-![版本](https://img.shields.io/badge/version-1.0.2-blue)
-![许可](https://img.shields.io/badge/license-MIT-green)
-![依赖](https://img.shields.io/badge/dependencies-none-brightgreen)
+![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-black)
+![Version](https://img.shields.io/badge/version-1.0.2-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-**macOS 原生轻量系统监控：信息不占菜单栏、不进 Dock，全部收进屏幕顶部的刘海（灵动岛）里。**
+**A lightweight system monitor that lives in the MacBook notch.**
 
-鼠标悬浮刘海 → 面板下坠展开，显示 CPU（总体 + 每核心）、GPU、内存、网络、磁盘、温度、风扇；鼠标移开 → 自动收起。
-刘海两侧还能常驻一行自己选的指标（CPU／内存／GPU／网络／磁盘／温度／风扇）。
+Hover the notch and a panel drops down with CPU, GPU, memory, network, disk, temperature and fans.
+Move away and it tucks itself back in — no menu bar space, no Dock icon.
 
-> Why: Stats 信息量大、常驻开销高，很多东西用不上也没法裁剪。
-> LiteStats 只做一件事 —— 把最关键的几项系统状态，放在你本来就一直在看的位置。
->
-> 实测常驻开销 **0.07–0.15% CPU / 16 MB 物理占用**（见 [实测开销](#实测开销)）。
+*[中文说明 →](README.zh-CN.md)*
 
-## 截图
+![Panel](docs/images/panel.png)
 
-| 悬浮展开的面板 | 刘海常驻指示条 | 展开形变（水滴） |
+## Features
+
+- **Hidden in the notch** — the collapsed state blends into the notch itself, pixel by pixel
+- **Hover to open** — the panel drops down quickly; click to pin it open
+- **Everything at a glance** — CPU (total + per core), GPU, memory, network, disk, temperature, fans
+- **Optional indicators** — show one metric on each side of the notch while collapsed
+- **External displays too** — screens without a notch get a small always-visible pill at the top center
+- **Local history** — a calendar of past days, hourly load and per-app usage, stored only on your Mac
+- **Light on resources** — roughly 0.1% CPU and 16 MB of memory at idle
+- **No dependencies** — pure Swift and system frameworks
+
+| Indicators | Collapsed pill (external display) | History |
 | --- | --- | --- |
-| ![面板](docs/images/panel.png) | ![指示条](docs/images/indicators.png) | ![形变](docs/images/morph.png) |
+| ![Indicators](docs/images/indicators.png) | ![Pill](docs/images/slot.png) | ![History](docs/images/history.png) |
 
-| 无刘海屏上的常驻圆槽 | 圆槽长成面板 | 历史统计 |
-| --- | --- | --- |
-| ![圆槽](docs/images/slot.png) | ![展开](docs/images/slot-expanded.png) | ![历史](docs/images/history.png) |
+## Requirements
 
-## 特性
+macOS 14 or later, Apple Silicon.
 
-- **藏进刘海**：收起态与物理刘海像素级重合（纯黑填充、无描边），不占菜单栏、不进 Dock
-- **悬浮即用**：0.1s 确定性轮询判定悬浮，展开是动画化的水滴形变；点击可固定
-- **数据齐全**：CPU 总/分核、GPU、内存（含交换）、网络（上下行 + 主网卡）、磁盘、温度、风扇
-- **常驻指示条**：左右各选一个指标画在刘海两侧的黑耳里，长度统一、数值居中、展开时同步收进刘海
-- **多屏 / 无刘海屏**：外接屏与非刘海机型用顶部中心的**常驻圆槽**（表情 + 数据），交互完全一致
-- **本地历史统计**：月历按天查看、今日 24 时段图（可悬停）、应用排行 Top 10、网络流量与 CPU/GPU/内存累计
-- **零依赖**：纯 Swift + 系统框架（IOKit / SystemConfiguration / libproc / SwiftUI），不引入任何第三方库
-- **低开销**：收起态不构建 SwiftUI 视图树，指示条用纯 AppKit 绘制，温度低频轮转采样
+## Install
 
-## 安装
+1. Download `LiteStats-1.0.2.dmg` from [Releases](https://github.com/alanhaskey/LiteStats/releases)
+2. Open it and drag **LiteStats** into *Applications*
+3. Launch it — the app runs in the background with no Dock icon
 
-### 下载（推荐）
+> The app is not code-signed or notarized, so on first launch macOS asks you to confirm:
+> **right-click the app → Open**, or run
+> `xattr -d com.apple.quarantine /Applications/LiteStats.app`
 
-到 [Releases](https://github.com/alanhaskey/LiteStats/releases) 下载 `LiteStats-<版本>.dmg`，
-打开后把 **LiteStats** 拖进「应用程序」。
+## Usage
 
-> ⚠️ 没有做代码签名与公证（没有 Apple 开发者证书），首次打开需要**右键 → 打开**，
-> 或先执行 `xattr -d com.apple.quarantine /Applications/LiteStats.app`。
->
-> 系统要求：macOS 14+，Apple Silicon（在 M5 Pro 上开发与实测）。
+| Action | Result |
+| --- | --- |
+| Move the pointer to the notch | Panel expands; data refreshes every second |
+| Move the pointer onto the panel | It stays open while you read |
+| Move the pointer away | Panel collapses and sampling slows down |
+| Click the notch or the panel | Pins it open (click again to unpin) |
+| Menu bar icon | History (⌘H) · Settings (⌘,) · Quit (⌘Q) |
 
-### 从源码构建
+**Settings** let you choose which metric (if any) sits on each side of the notch, how wide those
+sides are, how often data refreshes, which display the panel uses, and whether to launch at login.
 
-只用 SwiftPM，**不需要 Xcode 工程**：
+**History** opens a window with today's hourly load, a calendar for browsing past days, and a
+per-app ranking by CPU, network or memory. You can clear it whenever you like — nothing leaves
+your Mac.
+
+## Build from source
+
+Only SwiftPM is required; there is no Xcode project.
 
 ```bash
 git clone https://github.com/alanhaskey/LiteStats.git
 cd LiteStats
-./scripts/build-app.sh release     # 组装 dist/LiteStats.app
-open "dist/LiteStats.app"          # 启动：常驻后台，无 Dock 图标
+./scripts/build-app.sh release
+open "dist/LiteStats.app"
 ```
 
-### 开发命令
+Useful scripts: `./scripts/run.sh` (run in the foreground), `./scripts/test.sh` (unit tests),
+`./scripts/run.sh --selftest` (headless self-check).
 
-```bash
-./scripts/build-app.sh          # 组装 .app（本机没有可用 Xcode 工具链，全走 SPM）
-open "dist/LiteStats.app"       # 启动：常驻后台，无 Dock 图标
-```
+## Learn more
 
-当前版本 **1.0.2**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）。换图标：把 1024×1024 PNG 覆盖到 `Resources/AppIcon-1024.png`，跑 `./scripts/make-icon.sh`。
+Implementation notes, measured numbers and the pitfalls found along the way live in
+[docs/architecture.md](docs/architecture.md).
 
-> 图标有个坑：源图如果四周留了透明边距，macOS 26 会自动套一层**白色圆角底板**
-> （看起来像"图标里套图标"）。所以 `AppIcon-1024.png` 必须是**满画布**的：
-> 裁到内容外接矩形→缩放到 1024→四角透明区用边缘色延展填满，再交给系统的 squircle 裁切。
-
-启动后**把鼠标移到屏幕顶部的刘海上**（刘海左右各 26pt 也算），面板会在 0.1s 后下坠展开。
-
-| 操作 | 行为 |
-| --- | --- |
-| 鼠标移到刘海 | 0.1s 后展开，数据 1s 刷新 |
-| 鼠标移到面板上 | 保持展开，可以慢慢看 |
-| 鼠标移开 | 0.35s 后收起，采样自动降到 2s 一次 |
-| 点击刘海/面板 | 固定展开（再点一次取消固定，随后鼠标移开会收起） |
-| 菜单栏仪表盘图标 | **历史统计（⌘H）/ 设置…（⌘,）/ 退出（⌘Q）** |
-| 退出 | 菜单栏图标 → 退出 LiteStats；或 `pkill -f 'LiteStats.app/Contents/MacOS/LiteStats'` |
-
-开发命令：
-
-```bash
-./scripts/run.sh                   # 前台运行（Ctrl-C 退出）
-./scripts/run.sh --selftest        # 无头自检：几何 + 窗口 + 指示条 + 离屏渲染 + 设置界面 + 传感器
-./scripts/run.sh --benchmark 60    # 报告自身 CPU / 内存开销，跑完退出
-./scripts/test.sh                  # 单元测试 + 泄漏压测
-./scripts/e2e-hover-test.sh        # 端到端悬浮测试（会短暂移动光标，结束自动还原）
-```
-
-## 界面
-
-### 悬浮面板
-
-```
-CPU 15 核                                [CPU 60 点折线]
-10.0%                                    负载 5.17 4.52 4.02
-用户 5% · 系统 5% · 空闲 90%
-────────────────────────────────────────────────────────
-▮▮▯▯▯▮▯▯▯▯▯▯▯▯▯   ← 15 个核心各一根条（单个 Canvas 绘制），颜色随负载变（绿→琥珀→红）
-12 10  9  4  5  2  0  0  0  0 53 27 13 10  5
-────────────────────────────────────────────────────────
-GPU 0%           内存 68%              网络
-[░░░░░░░░]       [██████░░]            ╱╲___  双线：下行(绿)/上行(橙)
-显存 1.6 GB      16.4 GB / 24.0 GB     ↓ 7.6 KB/s ↑ 586 B/s
-────────────────────────────────────────────────────────
-温度 63°C        风扇 2709 · 2927 rpm
-────────────────────────────────────────────────────────
-磁盘 42% 已用 · 可用 536.0 GB · en0              已开机 2 天 5 小时
-```
-
-### 多屏与无刘海屏
-
-**有物理刘海**：一切照旧 —— 收起态完全隐藏，黑耳（若配了指标）直接从刘海两侧延伸出去。
-
-**没有刘海**（外接屏、非刘海机型）：顶部中心放一颗**常驻圆槽**（黑色胶囊，默认 92pt 宽、26pt 高），
-里面是 `随负载变脸的表情 + CPU%`，配了左右指示条就长成 `CPU 0% 😴 50°C` 这样。
-
-- 它**一直看得见**（不像刘海屏那样靠刘海本身当视觉锚点），所以有可发现性
-- 悬浮圆槽 → 圆槽**长成面板**：全程只有**一个形状**，宽度/顶边/高度/圆角一起插值 ——
-  progress 0 正好等于圆槽本身，progress 1 正好等于面板体（圆槽被完全吃掉，不会有胶囊压在面板顶上）。
-  收起态的圆槽由 AppKit 画，展开过程中它整颗淡出、交给 SwiftUI 的岛形接管（形状重合，看不出切换）
-- 不做"与菜单栏同高的假刘海"：外接屏没有屏幕顶部那条边可以融进去，
-  画一个贴顶黑色方块只会像块突兀的补丁
-
-设置里可选**显示在**：自动（优先刘海屏）/ 主屏 / **全部屏幕**（每块屏各挂一个面板）/ 指定屏幕。
-换屏、插拔显示器会自动重建面板（面板数 = 选中的屏幕数，日志里能看到）。
-
-### 刘海常驻指示条
-
-设置里可以给刘海左侧、右侧各选一个常驻指标。**默认一个都不选 —— 收起态什么也不画，轮廓与物理刘海完全重合，彻底藏进灵动岛里**：
-
-| 可选 | 指示条显示 |
-| --- | --- |
-| CPU 占用 | `CPU 12%`（颜色随负载） |
-| 内存占用 | `MEM 68%` |
-| GPU 占用 | `GPU 86%`（取不到时显示 `—`，不会假装 0） |
-| 网络上下行 | `↓ 1.2M ↑ 32K`（极简单位，双色） |
-| 磁盘占用 | `DSK 42%` |
-| CPU 温度 | `℃ 63°`（颜色随温度） |
-| 风扇转速 | `FAN 2709`（多风扇取最高） |
-
-黑耳长度是**统一的一个值**（设置里可调，默认 88pt）：两侧一样长、与你选了什么指标无关，
-数值在黑耳里**水平居中**——换指标不会让耳朵忽长忽短。**没选指标的那一侧完全不画黑耳**，
-折叠和展开都不会多出耳朵（展开态岛颈宽度 = 刘海 + 有指标那侧的黑耳，自检里有断言）。
-
-指示条画在刘海两侧的黑色"耳朵"里——鼠标悬浮这一带同样会展开面板。
-它用**纯 AppKit 手绘**（不是 SwiftUI），所以即使常驻也只多几百 KB，不会把渲染管线拉起来。
-
-> 注意：只有真的选了指标才会画黑耳。一个都不选时收起态是**零像素**绘制
-> （自检里有回归断言：`不选指标时收起态完全隐形 | 最大 alpha=0`），
-> 不会出现"刘海两边莫名其妙多出黑边、看起来被撑宽"的情况。
->
-> 黑耳必须用**纯黑**（`NSColor.black`）：物理刘海在屏幕上是纯黑（没有像素），
-> 之前用近黑 `RGB(11,11,13)`，并排放在浅色壁纸上一眼就能看出色差——那才是"指示条和灵动岛分离"的主因。
-> 另外黑耳的底边贴齐**刘海底边**（不是菜单栏底边，本机差 1pt），
-> 内侧沿刘海的圆角弧走、半径故意比刘海大 2pt（系统读不到真实圆角，宁多覆盖不留缝）。
-
-### 展开动效（水滴形变）
-
-展开不是简单的淡入，而是**轮廓本身在做液体形变**：
-
-1. 起点 `progress = 0`：轮廓与物理刘海**逐像素重合**（所以在收起态它是不存在的）；
-2. 岛颈先横向铺开（`pow(p, 0.5)`），面板体随后坠下（`pow(p, 1.35)`）—— 差速缓动制造"液体错位感"；
-3. 面板体开始时比目标窄（0.62 倍）、底部圆角接近半圆，像一颗**水滴**挂着；随进度摊平成面板；
-4. 落定用弹簧（`response 0.46 / damping 0.72`），带一点回弹；
-5. 文字内容被轮廓**裁切着"挤出来"**，并且比形变晚 30% 才开始淡入，避免形变中途文字乱跳。
-
-**左右黑耳和水滴形变是同步的**：展开时黑耳（连同里面的数值）用 0.34s easeOut 收进物理刘海，
-收起时用 0.30s 再长回来；展开态岛颈**恒等于刘海宽度**，不会多出任何耳朵。
-实现上黑耳是独立的 AppKit 视图，所以它有自己的 60Hz 插值定时器（单次动画约 20 帧）。
-
-收起方向是对称的：轮廓先退回刘海，视图树**在形变结束后才卸载**（这样才看得到"水滴收回去"，
-同时保证收起后立刻回到低常驻内存）。中间帧可以直接导出来看：
-`--selftest --dump-render /tmp/x.png` 会输出 `x-morph-25/50/75.png`。
-
-> 实现上有个必须注意的时序：**不能在同一轮 runloop 里既"挂载视图"又"把进度设成 1"**，
-> 否则 SwiftUI 首次渲染看到的就是终值、没有起始值可插值，表现成"展开是瞬间出现的"。
-> 现在是先以 `p=0` 挂上去，隔一次 main queue 再启动弹簧。
-> 自检里有断言守着：展开过程中连续采样离屏渲染，必须采到"尺寸介于刘海和成品之间"的中间帧
-> （实测时间线 `143ms:45 → 277ms:216 → 367ms:294 落定`）。
-
-### 设置界面
-
-菜单栏图标 → **设置…**（只留控件，不写说明文字）：
-
-- **刘海常驻指示条**：左右各选一个指标 + **统一的黑耳长度**（56–160 pt），带实时刘海示意图
-- **采样**：展开时刷新 / 收起时刷新
-- **历史统计**：打开历史统计窗口
-- **显示位置**：自动 / 主屏 / **全部屏幕** / 指定屏幕
-  （屏幕列表标注"主屏"与"有刘海/无刘海" —— 刘海是逐屏探测的，主屏不一定有刘海）
-- **通用**：菜单栏图标开关、开机自启
-- **关于**：版本、**本 App 当前开销**（每秒自测 CPU 与物理占用）
-
-设置窗口关闭即释放（SwiftUI 只在窗口存在时才有渲染开销）。
-
-开机自启优先用 `SMAppService.mainApp`（系统「登录项」里可见、可管理）；
-ad-hoc 签名或不在 `/Applications` 时会自动退回写一个 `~/Library/LaunchAgents/dev.litestats.app.plist`。
-
-## 历史统计（本地记录）
-
-菜单栏图标 → 设置 → **打开历史统计…**：
-
-- **月历**：点任意一天就切到那天的数据；格子按当前指标着色（越深越忙），未来日期置灰。
-  可以 ‹ › 翻到上个月/历史月份，纯本地数据、秒开
-- **今日时段图固定 24 根柱子**（00…23）：没有记录的小时也占位，位置稳定、可以直接对着钟点看；
-  **鼠标悬停任意时段显示该时段数值**（并画出竖向指示线）
-- **今天 / 近 7 天 / 本月** 三个区间（与日历并存）
-- 顶部四张卡片：网络下载、网络上行、CPU 累计（核·时）、内存均值
-- **时段图**：今天/昨天按小时、更长范围按天，标出峰值时段（"今天哪个时段高负载"）
-  CPU / 网络 / 内存三个维度可切换
-- **应用排行**：默认 Top 10，同样可切 CPU / 网络 / 内存；数据来自 libproc（每进程 CPU 时间与物理内存）+
-  `nettop`（每进程网络字节）
-- 底部显示本地占用，**清空数据**会弹确认框，确认后才删除
-
-**存储**（`~/Library/Application Support/LiteStats/History/`，自定义紧凑二进制，非 SQLite）：
-
-| 文件 | 记录 | 保留 |
-| --- | --- | --- |
-| `minutes.bin` | 72 B/条 | 7 天 |
-| `hours.bin` / `days.bin` | 64 B/条 | 180 天 / 永久 |
-| `app-hours.bin` / `app-days.bin` | 128 B/条（应用×时段） | 7 天 / 180 天 |
-| `app-names.bin` | name→path 旁表 | 只追加 |
-
-只追加 + 定长记录 → 断电最多丢尾部一条（残缺记录按长度取整丢弃，不会整库损坏）；
-清理过期数据走临时文件 + rename。清空会删除全部记录且不可恢复。
-
-**开销（实测）**：
-
-| 动作 | 实测 |
-| --- | --- |
-| `HistoryStore.record(snapshot:)` | **0.0008 ms/次**（只做内存聚合，落盘在后台队列） |
-| `HistoryStore.record(appSamples: 40 个)` | 0.0059 ms/次 |
-| `AppUsageCollector.sample()`（libproc 遍历 196 个进程 + 每 6 次跑一次 nettop） | **2.38 ms/次**（每 5s 一次 → ≈0.05% CPU） |
-| `nettop -P -x -l 1` 单次 | 10 ms |
-
-开启历史统计后整体常驻开销从 0.07% 升到 **约 0.15% CPU / 16 MB 物理占用**（60s `--benchmark` 实测）。
-
-**存储布局**（`~/Library/Application Support/LiteStats/History/`）：
-`minutes.bin` / `hours.bin` / `days.bin` / `app-hours.bin` / `app-days.bin` / `app-names.bin`，
-都是定长记录 + 文件头，追加为主、按需整体重写；单个文件损坏只影响它自己（会被改名保留并跳过）。
-
-> 踩到并修掉的一个真 bug：压缩/清理会为**所有**文件调度"整体重写"，而名字表的
-> `rewritePayloadLocked` 返回空 Data（设计上它只追加）—— 于是第一次清理就把名字表清空了，
-> 表现为 App 重启后所有应用的 `path` 全丢。现在 `.appNames` 会跳过整体重写，
-> 单元测试 `persistenceRoundTripSurvivesReopen` 守住这个行为。
-
-> 三个实现要点（都是实测踩出来的）：
-> 1. nettop 给出的是**进程启动以来的累计值**，所以按 `(pid, 名字)` 缓存上次值做差分；
->    PID 会被复用，名字变了必须重置基线 —— 这也是为什么"按应用"的流量在 App 启动后第一拍是空的。
-> 2. nettop **把进程名截断到 15 个字符**（`DSH Desktop Helper` → `DSH Desktop Hel`），
->    直接用会把一个应用拆成"有 CPU 的"和"有网络的"两条；已用同一拍 libproc 的 pid→完整名归一化。
-> 3. **`Process.waitUntilExit()` 在本机（CLT-only）即使对 `/bin/echo` 也要 ~67 ms**（Foundation 的等待带轮询），
->    而 nettop 13 ms 就写完了 stdout。改成"读完 stdout 即返回 + 空的 terminationHandler 异步回收"，
->    单次采集从 80 ms 降到 13 ms（连跑 20 次无残留进程、无僵尸）。
-
-## 实测开销
-
-`--benchmark` 让 App **自己**用 `getrusage` + `task_info(mach_task_self())` 报告，
-口径与活动监视器一致（本机沙箱里 `ps`/`top` 不可用，这样反而更准）。
-6 段共 60s，本机 MacBook Pro M5 Pro / macOS 27.0.1 / 1800×1169 内置刘海屏：
-
-| 阶段 | 平均 CPU | 物理占用 | RSS |
-| --- | --- | --- | --- |
-| ① 完全空闲（采样器与悬浮轮询全停） | 0.12 % | 14.1 MB | 53.5 MB |
-| ② **收起态常驻**（采样 2s + 悬浮判定 0.1s） | **0.08 %** | **14.2 MB** | 53.5 MB |
-| ③ 展开态（采样 1s + 面板渲染中） | 1.02 % | 31.1 MB | 77.0 MB |
-| ④ 再收起 | 0.07 % | 31.7 MB | 77.7 MB |
-| ⑤ 展开但停止采样（面板可见时的持续重绘地板） | 0.33 % | 28.2 MB | 75.1 MB |
-| ⑥ 展开 + 温度高频刷新（有人看温度/风扇） | 0.09 % | 25.5 MB | 75.0 MB |
-
-> 连跑两次复核：①②③⑤⑥ 分别是 (0.12 / 0.18)、(0.08 / 0.07)、(1.02 / 0.80)、(0.33 / 0.33)、(0.09 / 0.09)，
-> 偏差在噪声范围内。注意物理占用是"面板渲染过之后"的稳态值（面板可见时会涨到 ~30 MB，
-> 首次渲染前是 ~14 MB）——因为收起时不构建视图树，渲染缓存不会在收起后立刻归还。
-
-**日常状态（面板收起）≈ 0.1 % CPU / 14 MB 物理占用**。
-
-开销从哪来（分层隔离实验，每层叠加后跑 8s）：
-
-| 叠加的东西 | 平均 CPU |
-| --- | --- |
-| 裸 AppKit `.accessory` 应用（无窗口无定时器） | 0.165 % |
-| + 菜单栏图标 | 0.307 % |
-| + 状态级透明浮层窗口（灵动岛本体） | 0.602 % |
-| + SwiftUI 内容（收起态） | 0.801 % |
-| + 0.1s 悬浮轮询定时器 | 0.846 % |
-| + 每 2s 采一次（CPU + 内存） | 0.953 % |
-
-> 也就是说：**开销主要来自"常驻透明浮层 + SwiftUI"这个设计本身，而不是轮询/采样逻辑**——
-> 10 Hz 悬浮轮询只占 0.045 %，采样只占 0.1 %。
-
-### 四个关键优化（都有实测支撑）
-
-1. **收起时完全不构建 SwiftUI 视图树**（而不是设成 `opacity(0)`）。
-   只要内容存在，SwiftUI 就会初始化渲染管线：物理占用 **101.5 MB → 10.3 MB**。
-2. **面板里不用 `Image(systemName:)`（SF Symbol）**。实测展开态每秒重绘时矢量符号会被反复渲染，
-   展开态 CPU 明显变高；改用文字后回落。
-3. **每核心占用条用单个 `Canvas` 画完**（而不是 15 组 VStack/Shape/Text ≈ 45 个视图），
-   展开态的数据更新重绘成本大幅下降。
-4. **GPU 只读 `PerformanceStatistics` 单个属性**（不是 `IORegistryEntryCreateCFProperties`）+ 缓存 IOKit 句柄 —— 快 50 倍。
-
-## 温度与风扇（Apple Silicon）
-
-两项都能读到，**不需要 root**，但路径和 Intel 机器完全不同：
-
-| 指标 | 路径 | 实测 |
-| --- | --- | --- |
-| 芯片温度 | 私有 HID：`IOHIDEventSystemClientCreateWithType(type: 1 Admin)` → `IOHIDServiceClientCopyEvent(type 15)` | 76 个服务 / 17 个唯一名字，`PMU tdie*` 最高 ~63 °C |
-| 电池温度 | HID `TB0T` / `Ts0P`，或 SMC 同键兜底 | ~36 °C |
-| 风扇转速 | AppleSMC `selector 2`，键 `F0Ac`/`F1Ac`（+ `F0Mn`/`F0Mx`/`F0Tg`） | ~2700 / ~2900 rpm，上限 7826 rpm |
-
-三个必须知道的坑（都已在代码注释里写清）：
-
-1. **HID 客户端类型必须是 1（Admin）**；类型 2（Monitor）能匹配到 77 个服务但一个读数都读不出来。
-2. **未接传感器的槽位会返回垃圾值**（`PMU tdev*` 报 -9199 ~ -9203 °C）。只接受 `(0, 125]` 区间，否则界面上会出现 -9201°C。
-3. **`SMCKeyData` 结构体必须精确 80 字节**：Swift 里 `dataSize/dataType/attrs` 之后要手动补 3 个 pad，
-   否则 selector 2 直接返回 `0xE00002C2 (kIOReturnBadArgument)`，所有键都读不到。
-
-### 温度的读取成本（它唯一"贵"的地方）
-
-Apple Silicon 上每次 `IOHIDServiceClientCopyEvent` 都是一次 **~0.75 ms 的同步 IPC**（实测），
-所以"每拍全量读 76 个传感器" = **78 ms/拍**，按 1 Hz 折算就是 1.8 % CPU——会直接毁掉常驻开销目标。三级应对：
-
-1. **轮转切片**：每次只读 8 个服务（≈7 ms），按"同名实例交错"排序，保证每个传感器名字在 2 次刷新内被采到；
-2. **隔拍刷新**：默认每 5 拍读一次（`MonitorConfiguration.thermalRefreshEveryNTicks`）；
-3. **自适应降频**：没人看温度时（面板收起且指示条没选温度/风扇）自动放宽到每 30 拍一次
-   （`MonitorService.thermalIsVisible`），折算 ≈0.03 % CPU。
-
-> 另外：HID 有 76 个"服务"但只有 17 个**唯一名字**（同名实例读数不同）。
-> 冻结的 `ThermalSensor.id == name`，所以对外按名字去重并保留最大值，否则 SwiftUI `ForEach` 会因重复 id 异常。
-
-## 无泄漏
-
-`./scripts/test.sh` 里包含逐传感器的泄漏压测（常驻工具最怕这个）：
-
-```
-[soak] CPUSensor: 20000 拍 RSS +0.05 MB → 2.5 B/拍
-[soak] NetworkSensor: 20000 拍 RSS +0.05 MB → 2.5 B/拍
-[soak] GPUSensor: 20000 拍 RSS +0.02 MB → 0.8 B/拍
-[soak] SystemMonitor(全部传感器): 10000 拍 RSS +0.08 MB → 8.2 B/拍
-```
-
-> 这几 B/拍是 malloc arena 噪声：把拍数从 6000 加到 30000，增长不随之线性增长（反而摊薄到 3 B/拍）。
-> `host_processor_info` 返回的内核 vm 内存有 `vm_deallocate`，`mach_host_self()` 的 send right 有归还。
-
-## 目录结构
-
-```
-Package.swift                 # 唯一构建清单
-Sources/LiteStatsCore/        # 传感器层：纯数据 + 系统调用，不依赖 AppKit/SwiftUI
-  Models.swift                #   对外数据模型（公开接口）
-  SamplingMath.swift          #   纯函数：tick 差分、速率换算（可单测）
-  CPUSensor.swift             #   host_processor_info + getloadavg
-  MemorySensor.swift          #   host_statistics64 + swap
-  GPUSensor.swift             #   IOKit IOAccelerator，句柄缓存
-  NetworkSensor.swift         #   getifaddrs / IFMIB，主接口识别
-  DiskSensor.swift            #   statfs
-  ThermalHIDReader.swift      #   私有 HID 温度（Admin 客户端 + 轮转切片）
-  SMCReader.swift             #   AppleSMC（80 字节结构体）+ 键值解析
-  ThermalSampler.swift        #   温度/风扇编排 + 垃圾值过滤 + 降级
-  SystemMonitor.swift         #   编排 + 线程安全
-Sources/LiteStatsProbe/       # 无头探针 CLI（人类可读 + --json JSONL）
-Tests/LiteStatsCoreTests/     # 单元测试：纯函数边界、传感器降级、契约、泄漏压测
-Sources/LiteStats/            # 应用层
-  App/                        #   启动装配、菜单栏、偏好、设置窗口、开机自启、自检、开销测量
-  Notch/                      #   屏幕几何、浮层窗口、悬浮状态机、常驻指示条（AppKit 手绘）
-  Monitor/                    #   采样调度 + 历史环形缓冲 + 温度自适应降频
-  UI/                         #   SwiftUI 面板（岛形轮廓、指标区块、迷你折线、设置界面）
-  Support/                    #   格式化、诊断日志
-docs/architecture.md          # 架构、坐标系约定、接口契约、验收标准
-scripts/                      # 构建 / 运行 / 测试 / 端到端脚本（含环境适配）
-tools/cursor-warp.swift       # 端到端测试用的光标移动小工具
-```
-
-## 关键实现约定（踩过的坑）
-
-- **窗口层级 `.statusBar(25)`**：低于菜单栏（`.mainMenu = 24`）会收不到刘海区域的鼠标事件。
-- **必须重写 `constrainFrameRect`**：AppKit 默认把窗口往下压以避免遮挡菜单栏，会让贴顶的岛颈错位。
-- **展开 frame 必须完整包含收起 frame**：否则鼠标从刘海往面板移动途中会触发"移出"→ 收起 → 又进入 → 展开，面板疯狂抖动。
-  指示条左右宽度不等时，收起 frame 不再以刘海为对称中心，展开 frame 必须**取并集**而不是"宽度取大"。
-- **菜单栏带比物理刘海高 1pt**（本机 39 vs 38）：岛颈要画到菜单栏底边，才能和面板体无缝相接。
-- **收起态默认完全不绘制**（自检断言整张离屏位图最大 alpha = 0）→ 绝不会遮挡菜单栏；开了指示条则只画两侧黑耳。
-- **`NSEvent.mouseLocation` 是左下原点**，CG 坐标是左上原点，两套坐标不能混。
-- **Swift 6 + `DispatchSource.setEventHandler`**：参数类型没标 `@Sendable`，闭包会继承外层 `@MainActor` 隔离，
-  被后台队列调用时运行时会反复报 data race → 必须显式写 `{ @Sendable in }`。
-- **`task_info(MACH_TASK_BASIC_INFO)` 的 CPU 时间在本机不可靠**（长时间不更新，会报出 0 ms），改用 POSIX `getrusage`。
-- **`/usr/bin/time -l` 的 maximum RSS 是峰值**，用它对比不同时长的运行来判泄漏会得出假结论。
-
-## 本机环境注意
-
-- **Xcode.app 装着但没同意许可证**（`xcode-select` 指向 Command Line Tools），所以不能用 `xcodebuild`，全走 SPM。
-- SwiftPM 的 `sandbox-exec` 在此环境不可用 → 所有 swift 命令都要 `--disable-sandbox`。
-- SwiftPM 有时解析不到宏插件路径（SwiftUI 的 `@State`/`@Bindable` 需要 `SwiftUIMacros`，swift-testing 需要 `TestingMacros`），
-  报 `plugin ... not found`。`scripts/_common.sh` 会显式把 Xcode 与 CLT 两处的插件目录都传给 swiftc。
-- 工作目录路径含空格，所以脚本里的 swift 参数必须用数组 `"${LITESTATS_FLAGS[@]}"` 展开。
-- 屏幕录制权限未授予 → 无法 `screencapture`。视觉验证改用**进程内离屏渲染**
-  （`--selftest --dump-render`），照样能看到真实画面。
-
-## 验证记录（本机实测原始输出）
-
-| 项目 | 命令 | 结果 |
-| --- | --- | --- |
-| 单元测试 + 泄漏压测 | `./scripts/test.sh` | 见下方 |
-| 无头自检 | `LiteStats --selftest` | **52/52 通过**（几何不变式、窗口层级、指示条几何与绘制、设置界面渲染、传感器数值） |
-| 端到端悬浮 | `./scripts/e2e-hover-test.sh` | **PASS**，真实光标驱动：`state=expanded` → `state=collapsed` |
-| 传感器数值 | `litestats-probe --seconds 10` | 见下方 |
-| 自身开销 | `LiteStats --benchmark 60` | 见上表 |
-
-**单元测试 + 泄漏压测**（`./scripts/test.sh`）：
-
-```
-✔ Test run with 64 tests in 8 suites passed
-```
-
-**权威泄漏检查**（`./scripts/soak.sh all-sensors 20000`，单进程、无并行测试干扰）：
-
-```
-cpu  20000 拍  RSS 5.83 → 5.83 MB   +0.00 MB   0.0 B/拍
-mem  20000 拍  RSS 5.81 → 5.81 MB   +0.00 MB   0.0 B/拍
-net  20000 拍  RSS 6.55 → 6.59 MB   +0.05 MB   2.5 B/拍
-gpu  20000 拍  RSS 6.08 → 6.08 MB   +0.00 MB   0.0 B/拍
-disk 20000 拍  RSS 5.83 → 5.83 MB   +0.00 MB   0.0 B/拍
-all  20000 拍  RSS 8.06 → 8.08 MB   +0.02 MB   0.8 B/拍
-```
-
-> 单元测试里也有一份 soak 断言，但阈值故意放得很宽：swift-testing 默认并行跑各 suite，
-> 温度测试做 HID/SMC 发现时会一次性分配几 MB，把同一进程里测到的 RSS 抬高
-> （实测 CPUSensor 从 2.5 B/拍 被污染成 288 B/拍）。所以**权威测量只认 `scripts/soak.sh`**。
-
-**传感器数值**（`litestats-probe --seconds 32 --json`，末拍）：
-
-```
-cpuTemp 63.1 °C · batteryTemp 38.0 °C · gpuTemp null（本机无 GPU 专属传感器，不冒充）
-sensorCount 17（76 个 HID 服务按名字去重后的有效传感器数）
-fans 4092 / 4425 rpm（F0Mn 2317、F0Mx 7826）· thermal readMs 7.93 ms
-source "HID(36 个传感器) + SMC(2 个风扇)"
-```
-
-**端到端悬浮**（`./scripts/e2e-hover-test.sh`，程序化移动真实光标）：
-
-```
-1791613896.029 state=expanded  mouse=(900.0, 1150.0) frame={{764, 1130}, {272, 39}}
-1791613897.679 state=collapsed mouse=(895.4, 458.2)  frame={{700, 875}, {400, 294}}
-E2E RESULT: PASS（展开 1 次 / 收起 1 次）
-```
-
-## 还没做
-
-- 阈值告警（CPU 持续 100%、内存压力、磁盘将满）
-- 历史数据导出（CSV / JSON）
-- GPU 温度（本机没有 GPU 专属传感器，`gpuTemperature` 保持 nil 而不是拿 CPU 温度冒充）
-- 正式签名与公证（目前 ad-hoc 签名，仅本机可用；要分发给别人需要开发者证书）
-
-## 发布
-
-```bash
-./scripts/build-app.sh release      # 干净编译并组装 dist/LiteStats.app
-./scripts/package-release.sh        # 打成 zip + dmg，并解压自检
-```
-
-版本号在 `Resources/Info.plist` 的 `CFBundleShortVersionString`（界面里的"版本"读的就是它）。
-更新记录写 [CHANGELOG.md](CHANGELOG.md)，发完记一次 `git tag v<版本>`。
-
-产物：`dist/LiteStats-<版本>.zip`、`dist/LiteStats-<版本>.dmg`、`dist/SHA256SUMS-<版本>.txt`。
-
-> 本机没有开发者证书，签名是 **ad-hoc**。别人下载后首次打开需要「右键 → 打开」，
-> 或者 `xattr -d com.apple.quarantine /Applications/LiteStats.app`。
-
-## 许可
+## License
 
 [MIT](LICENSE) © 2026 alanhaskey
 
-温度读取用到了 Apple 未公开的 HID 传感器接口（`IOHIDEventSystemClientCreateWithType`），
-这是逆向所得的用法、不保证在未来系统版本上可用；代码里做了完整降级——
-读不到就不显示，绝不影响监控本身。
+Temperature and fan readings rely on undocumented Apple HID sensors. They are optional — if the
+system does not report them, LiteStats simply shows nothing.
