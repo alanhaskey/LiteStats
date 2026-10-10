@@ -20,7 +20,6 @@ struct SettingsView: View {
     var body: some View {
         Form {
             indicatorSection
-            islandSection
             samplingSection
             generalSection
             aboutSection
@@ -49,13 +48,26 @@ struct SettingsView: View {
                     Text(metric.title).tag(metric)
                 }
             }
+            HStack {
+                Text("黑耳长度")
+                Slider(value: $preferences.earWidth, in: 56...160, step: 4)
+                Text("\(Int(preferences.earWidth)) pt")
+                    .monospacedDigit()
+                    .frame(width: 52, alignment: .trailing)
+            }
+            Text("黑耳是刘海左右延伸出来的黑色区域。**两侧长度始终一致、与你选了什么指标无关**，"
+                 + "指标数值在黑耳里居中显示 —— 换指标不会让耳朵忽长忽短。"
+                 + "没选指标的那一侧完全不画黑耳（折叠、展开都不会多出耳朵）。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 6) {
                 Text("预览")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 NotchPreview(left: preferences.leftIndicator,
                              right: preferences.rightIndicator,
-                             tabFlank: CGFloat(preferences.tabFlank))
+                             earWidth: CGFloat(preferences.earWidth))
                     .frame(height: 30)
                 Text("指示条画在刘海两侧的黑色区域里，不占用菜单栏；鼠标悬浮这一带同样会展开面板，"
                      + "每秒刷新（收起态采样间隔会自动收紧到 1s）。")
@@ -63,25 +75,6 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
-    }
-
-    // MARK: - 灵动岛外观
-
-    private var islandSection: some View {
-        Section("灵动岛") {
-            HStack {
-                Text("岛颈外扩")
-                Slider(value: $preferences.tabFlank, in: 0...60, step: 2)
-                Text("\(Int(preferences.tabFlank)) pt")
-                    .monospacedDigit()
-                    .frame(width: 48, alignment: .trailing)
-            }
-            Text("岛颈是紧贴物理刘海左右延伸出去的黑色区域。不同机型的刘海宽度不同，"
-                 + "这里可以微调：0 = 完全不外扩，只保留物理刘海本身。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -172,42 +165,43 @@ struct SettingsView: View {
     }
 }
 
-/// 刘海两侧指示条的示意图（用真实刘海宽度按比例画）。
+/// 刘海两侧指示条的示意图（用真实刘海宽度按比例画，两侧黑耳等长、内容居中）
 private struct NotchPreview: View {
     let left: IndicatorMetric
     let right: IndicatorMetric
-    let tabFlank: CGFloat
+    let earWidth: CGFloat
 
     var body: some View {
         GeometryReader { geo in
             let notchWidth = ScreenGeometry.resolve()?.notchRect?.width ?? 220
-            let scale = min(1, (geo.size.width - 2 * (tabFlank + 10)) / max(notchWidth, 1))
-            let notch = max(40, notchWidth * scale)
-            let ear = tabFlank * scale
+            let leftEar: CGFloat = left.needsEar ? earWidth : 0
+            let rightEar: CGFloat = right.needsEar ? earWidth : 0
+            let total = notchWidth + leftEar + rightEar
+            let scale = min(1, geo.size.width / max(total, 1))
 
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color.primary.opacity(0.08))
                 HStack(spacing: 0) {
-                    earView(metric: left, width: ear, roundedLeading: true)
+                    earView(metric: left, width: leftEar * scale, isLeft: true)
                     Rectangle()
                         .fill(.black)
-                        .frame(width: notch)
-                    earView(metric: right, width: ear, roundedLeading: false)
+                        .frame(width: notchWidth * scale)
+                    earView(metric: right, width: rightEar * scale, isLeft: false)
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func earView(metric: IndicatorMetric, width: CGFloat, roundedLeading: Bool) -> some View {
+    private func earView(metric: IndicatorMetric, width: CGFloat, isLeft: Bool) -> some View {
         ZStack {
             UnevenRoundedRectangle(
-                bottomLeadingRadius: roundedLeading ? 5 : 0,
-                bottomTrailingRadius: roundedLeading ? 0 : 5,
+                bottomLeadingRadius: isLeft ? 5 : 0,
+                bottomTrailingRadius: isLeft ? 0 : 5,
                 style: .continuous)
                 .fill(.black)
-            if metric != .none, width > 18 {
+            if width > 20 {
                 Text(shortLabel(metric))
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.75))

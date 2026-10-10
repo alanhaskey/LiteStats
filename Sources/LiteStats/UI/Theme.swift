@@ -18,8 +18,10 @@ enum Theme {
     static let subtle = Color.white.opacity(0.38)
     static let hairline = Color.white.opacity(0.10)
 
-    /// 面板底色：接近纯黑（灵动岛本体就是黑的），不用毛玻璃材质——省 ~90 MB 物理占用
-    static let panelFill = Color(red: 0.043, green: 0.043, blue: 0.051).opacity(0.97)
+    /// 面板底色：**纯黑**。物理刘海在屏幕上是纯黑，只有用纯黑，展开时的岛颈/黑耳
+    /// 才能和它无缝连成一体；略微偏灰的一点点色差都会让两者看起来是分开的两块。
+    /// 面板体靠 1px 高光和阴影保持"卡片感"。不用毛玻璃材质——省 ~90 MB 物理占用。
+    static let panelFill = Color.black
 
     // 指标色（按负载变色）
     static func cpu(_ usage: Double) -> Color {

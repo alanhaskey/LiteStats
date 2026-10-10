@@ -4,7 +4,9 @@ import LiteStatsCore
 /// 指示条配色（NSColor 版本，刻意不与 SwiftUI 的 Theme 共用，
 /// 避免这个"常驻绘制"的文件把 SwiftUI 拖进来）。
 enum IndicatorPalette {
-    static let earFill = NSColor(red: 0.043, green: 0.043, blue: 0.051, alpha: 1.0)
+    /// 必须**纯黑**：物理刘海在屏幕上是纯黑（没有像素），
+    /// 之前用近黑 RGB(11,11,13)，并排放在浅色壁纸上一眼就能看出色差 —— 那才是"指示条和灵动岛分离"的主因。
+    static let earFill = NSColor.black
     static let label = NSColor.white.withAlphaComponent(0.52)
     static let value = NSColor.white
 
@@ -89,13 +91,13 @@ final class NotchIndicatorView: NSView {
         if leftEarWidth > 0 {
             let rect = CGRect(x: 0, y: earY, width: leftEarWidth, height: earHeight)
             drawEar(rect, side: .left)
-            drawMetric(leftMetric, in: rect, alignment: .right)
+            drawMetric(leftMetric, in: rect)
         }
         if rightEarWidth > 0 {
             let rect = CGRect(x: bounds.width - rightEarWidth, y: earY,
                               width: rightEarWidth, height: earHeight)
             drawEar(rect, side: .right)
-            drawMetric(rightMetric, in: rect, alignment: .left)
+            drawMetric(rightMetric, in: rect)
         }
     }
 
@@ -108,7 +110,10 @@ final class NotchIndicatorView: NSView {
     /// 并且把底边多画过去一个圆角半径，正好补上刘海圆角外侧那块楔形区域 ——
     /// 视觉上就是刘海本身变宽了。
     private func drawEar(_ rect: CGRect, side: EarSide) {
+        // 外侧下角用视觉圆角；内侧要贴物理刘海的圆角，**故意比它大 2pt**：
+        // 系统没有任何 API 能读到刘海真实的圆角半径，宁可用"多覆盖 2pt"也不要因为估小而留出一道缝。
         let radius = min(notchCornerRadius, rect.width, rect.height / 2)
+        let innerRadius = min(radius + 2, rect.width, rect.height / 2)
         guard radius > 0.5 else {
             IndicatorPalette.earFill.setFill()
             NSBezierPath(rect: rect).fill()
@@ -126,9 +131,9 @@ final class NotchIndicatorView: NSView {
             path.line(to: CGPoint(x: outer, y: bottom + radius))
             path.appendArc(withCenter: CGPoint(x: outer + radius, y: bottom + radius),
                            radius: radius, startAngle: 180, endAngle: 270)
-            path.line(to: CGPoint(x: inner + radius, y: bottom))
-            path.appendArc(withCenter: CGPoint(x: inner + radius, y: bottom + radius),
-                           radius: radius, startAngle: 270, endAngle: 180, clockwise: true)
+            path.line(to: CGPoint(x: inner + innerRadius, y: bottom))
+            path.appendArc(withCenter: CGPoint(x: inner + innerRadius, y: bottom + innerRadius),
+                           radius: innerRadius, startAngle: 270, endAngle: 180, clockwise: true)
             path.line(to: CGPoint(x: inner, y: top))
         case .right:
             let outer = rect.maxX
@@ -137,9 +142,9 @@ final class NotchIndicatorView: NSView {
             path.line(to: CGPoint(x: outer, y: bottom + radius))
             path.appendArc(withCenter: CGPoint(x: outer - radius, y: bottom + radius),
                            radius: radius, startAngle: 0, endAngle: 270, clockwise: true)
-            path.line(to: CGPoint(x: inner - radius, y: bottom))
-            path.appendArc(withCenter: CGPoint(x: inner - radius, y: bottom + radius),
-                           radius: radius, startAngle: 270, endAngle: 360)
+            path.line(to: CGPoint(x: inner - innerRadius, y: bottom))
+            path.appendArc(withCenter: CGPoint(x: inner - innerRadius, y: bottom + innerRadius),
+                           radius: innerRadius, startAngle: 270, endAngle: 360)
             path.line(to: CGPoint(x: inner, y: top))
         }
         path.close()
@@ -147,9 +152,7 @@ final class NotchIndicatorView: NSView {
         path.fill()
     }
 
-    private enum Alignment { case left, right }
-
-    private func drawMetric(_ metric: IndicatorMetric, in rect: CGRect, alignment: Alignment) {
+    private func drawMetric(_ metric: IndicatorMetric, in rect: CGRect) {
         guard metric != .none,
               let text = attributedString(for: metric),
               text.length > 0 else { return }
@@ -164,7 +167,8 @@ final class NotchIndicatorView: NSView {
             size = drawable.size()
         }
 
-        let x = alignment == .right ? rect.maxX - 6 - size.width : rect.minX + 6
+        // 内容水平居中：两侧耳长统一，居中后不管放什么指标看起来都是稳的
+        let x = rect.midX - size.width / 2
         let y = rect.midY - size.height / 2
         drawable.draw(at: CGPoint(x: x, y: y))
     }

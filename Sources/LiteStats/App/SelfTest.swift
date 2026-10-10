@@ -320,21 +320,21 @@ enum SelfTest {
         plain.stop()
 
         var layout = baseLayout
-        layout.leftIndicatorWidth = IndicatorMetric.cpu.indicatorWidth
-        layout.rightIndicatorWidth = IndicatorMetric.network.indicatorWidth
+        layout.earWidth = 88
+        layout.leftEarActive = true
+        layout.rightEarActive = true
         let leftEar = layout.collapsedLeftEarRect
         let rightEar = layout.collapsedRightEarRect
         info("指示条布局：收起 frame=\(rect(layout.collapsedFrame)) 左耳=\(rect(leftEar)) 右耳=\(rect(rightEar))")
 
-        check("左侧黑耳容得下指示条", leftEar.width >= layout.leftIndicatorWidth + 2,
-              "耳 \(leftEar.width) vs 指示条 \(layout.leftIndicatorWidth)")
-        check("右侧黑耳容得下指示条", rightEar.width >= layout.rightIndicatorWidth + 2,
-              "耳 \(rightEar.width) vs 指示条 \(layout.rightIndicatorWidth)")
+        check("两侧黑耳长度完全一致（与内容无关）", abs(leftEar.width - rightEar.width) < 0.5,
+              "左 \(leftEar.width) vs 右 \(rightEar.width)")
+        check("黑耳长度 = 设置值", abs(leftEar.width - layout.earWidth) < 0.5, "\(leftEar.width)")
         check("黑耳不侵占刘海区域",
               leftEar.maxX <= notch.minX - layout.collapsedFrame.minX + 0.5
               && rightEar.minX >= notch.maxX - layout.collapsedFrame.minX - 0.5)
         check("收起热区比刘海宽出指示条部分",
-              layout.collapsedFrame.width > notch.width + layout.leftIndicatorWidth)
+              layout.collapsedFrame.width > notch.width + layout.earWidth)
         check("展开 frame 仍完整包含收起 frame", layout.expandedFrame.contains(layout.collapsedFrame))
 
         // 先采一拍，让指示条渲染出真实数值（不然预览里只有 "CPU —"）
@@ -378,7 +378,25 @@ enum SelfTest {
         controller.forceState(.expanded, animated: false)
         pump(0.45)
         check("展开后指示条自动隐藏（由岛颈接管）", controller.indicatorIsHidden)
+        // 展开态的岛颈必须**正好**等于「刘海 + 该侧黑耳」，不能凭空多出耳朵
+        let expectedTab = notch.width + (layout.leftEarActive ? layout.earWidth : 0)
+                                      + (layout.rightEarActive ? layout.earWidth : 0)
+        check("展开态岛颈宽度 = 刘海 + 有指标那侧的黑耳（不多露耳朵）",
+              abs(layout.tabRect.width - expectedTab) < 1.0,
+              "岛颈 \(layout.tabRect.width) vs 期望 \(expectedTab)")
         controller.stop()
+
+        // 只选一侧时：另一侧必须完全不画（折叠、展开都不能多出耳朵）
+        var oneSided = baseLayout
+        oneSided.earWidth = 88
+        oneSided.leftEarActive = false
+        oneSided.rightEarActive = true
+        let oneSidedTab = oneSided.tabRect.width
+        check("只选右侧时，岛颈只向右延伸",
+              abs(oneSidedTab - (notch.width + 88)) < 1.0, "\(oneSidedTab)")
+        check("只选右侧时，左侧收回（tab 左边 = 刘海左边）",
+              abs(oneSided.tabRect.minX - oneSided.notchRect.minX) < 1.0,
+              "tab.minX \(oneSided.tabRect.minX) vs 刘海 \(oneSided.notchRect.minX)")
     }
 
     private static func pump(_ seconds: TimeInterval) {
@@ -417,7 +435,7 @@ enum SelfTest {
         let preferences = Preferences(defaults: defaults)
         preferences.leftIndicator = .cpu
         preferences.rightIndicator = .temperature
-        preferences.tabFlank = 30
+        preferences.earWidth = 104
 
         let controller = SettingsWindowController(preferences: preferences, service: service)
         controller.present()
@@ -447,8 +465,8 @@ enum SelfTest {
         // 偏好改动要能落盘（用独立 suite，不污染真实设置）
         let reread = Preferences(defaults: defaults)
         check("设置项可持久化", reread.leftIndicator == .cpu && reread.rightIndicator == .temperature
-              && abs(reread.tabFlank - 30) < 0.01,
-              "左=\(reread.leftIndicator.rawValue) 右=\(reread.rightIndicator.rawValue) 岛颈=\(reread.tabFlank)")
+              && abs(reread.earWidth - 104) < 0.01,
+              "左=\(reread.leftIndicator.rawValue) 右=\(reread.rightIndicator.rawValue) 耳长=\(reread.earWidth)")
 
         window.close()
         pump(0.2)

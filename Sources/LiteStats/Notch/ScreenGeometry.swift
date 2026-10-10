@@ -82,14 +82,11 @@ struct PanelLayout: Equatable {
     var bodyHeight: CGFloat = 234
     /// 收起态热区在刘海左右各外扩多少（有刘海时）
     var collapsedFlank: CGFloat = 26
-    /// 展开态"岛颈"在刘海左右各外扩多少（可见的小黑耳）。
-    /// 不同机型刘海宽度不同，这里由用户配置（0 = 完全不外扩）。
-    var tabFlank: CGFloat = 24
-    /// 常驻指示条占用宽度（0 = 该侧不显示）
-    var leftIndicatorWidth: CGFloat = 0
-    var rightIndicatorWidth: CGFloat = 0
-    /// 指示条文本与刘海边缘之间的最小留白
-    var indicatorInset: CGFloat = 10
+    /// 刘海两侧黑耳的**统一长度**（pt）。两侧等长、与显示内容无关，内容在其中居中。
+    var earWidth: CGFloat = 88
+    /// 该侧是否有指示条（没有就完全不画黑耳，折叠/展开都不额外露耳朵）
+    var leftEarActive = false
+    var rightEarActive = false
     /// 无刘海屏时，收起态小胶囊的尺寸与距屏幕顶部的间距
     var fallbackPillSize = CGSize(width: 132, height: 26)
     var fallbackTopGap: CGFloat = 8
@@ -101,13 +98,10 @@ struct PanelLayout: Equatable {
     /// 顶部菜单栏带高度：有刘海时等于菜单栏高，无刘海时收起物本身就在下方
     var bandHeight: CGFloat { isFallback ? 0 : geometry.menuBarHeight }
 
-    /// 黑耳在刘海左右的实际额外宽度：该侧有指示条时让出位置，否则用用户配置的岛颈宽度
-    var leftEarWidth: CGFloat {
-        leftIndicatorWidth > 0 ? max(tabFlank, leftIndicatorWidth + indicatorInset) : tabFlank
-    }
-    var rightEarWidth: CGFloat {
-        rightIndicatorWidth > 0 ? max(tabFlank, rightIndicatorWidth + indicatorInset) : tabFlank
-    }
+    /// 黑耳在刘海左右的实际额外宽度：**只有该侧选了指标才画**，两侧长度一致。
+    /// 没选指标那一侧为 0 —— 折叠和展开都不会多出一块耳朵。
+    var leftEarWidth: CGFloat { leftEarActive ? earWidth : 0 }
+    var rightEarWidth: CGFloat { rightEarActive ? earWidth : 0 }
 
     /// 收起态热区左右外扩量（必须 ≥ 耳宽，否则鼠标够不到指示条）
     var collapsedLeftExtent: CGFloat { max(collapsedFlank, leftEarWidth) }

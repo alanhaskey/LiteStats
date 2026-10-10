@@ -39,16 +39,8 @@ enum IndicatorMetric: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// 指示条在该侧需要的宽度（pt：按最长文本实测预留，宁可宽一点也别让字被压缩变形）
-    var indicatorWidth: CGFloat {
-        switch self {
-        case .none: return 0
-        case .cpu, .memory, .gpu, .disk: return 64
-        case .temperature: return 58
-        case .fan: return 72
-        case .network: return 100
-        }
-    }
+    /// 该侧是否需要黑耳（只有选了指标才需要）
+    var needsEar: Bool { self != .none }
 }
 
 /// 偏好设置（UserDefaults 持久化）。改动通过 `onChange` 即时生效。
@@ -59,7 +51,7 @@ final class Preferences {
         static let expandedInterval = "expandedInterval"
         static let collapsedInterval = "collapsedInterval"
         static let showMenuBarItem = "showMenuBarItem"
-        static let tabFlank = "tabFlank"
+        static let earWidth = "earWidth"
         static let leftIndicator = "leftIndicator"
         static let rightIndicator = "rightIndicator"
         static let launchAtLogin = "launchAtLogin"
@@ -75,15 +67,16 @@ final class Preferences {
         didSet { defaults.set(collapsedInterval, forKey: Key.collapsedInterval); onChange?() }
     }
 
-    /// 岛颈（黑色耳朵）在刘海左右各外扩多少 pt。不同机型刘海宽度不同，这里让用户微调。
-    var tabFlank: Double {
+    /// 刘海两侧黑耳的**统一长度**（pt）。两侧一样长、与显示内容无关，内容在其中居中。
+    /// 之前是按内容长度自适应，导致换一个指标耳朵就变长变短，看起来很不稳定。
+    var earWidth: Double {
         didSet {
-            let clamped = min(max(tabFlank, 0), 60)
-            if clamped != tabFlank {
-                tabFlank = clamped
+            let clamped = min(max(earWidth, 48), 160)
+            if clamped != earWidth {
+                earWidth = clamped
                 return // didSet 会再次进入
             }
-            defaults.set(tabFlank, forKey: Key.tabFlank)
+            defaults.set(earWidth, forKey: Key.earWidth)
             onChange?()
         }
     }
@@ -113,9 +106,9 @@ final class Preferences {
         let collapsed = defaults.double(forKey: Key.collapsedInterval)
         self.expandedInterval = expanded > 0 ? expanded : 1.0
         self.collapsedInterval = collapsed > 0 ? collapsed : 2.0
-        // 默认 24pt：岛颈在物理刘海左右各露出一小截黑耳
-        self.tabFlank = defaults.object(forKey: Key.tabFlank) != nil
-            ? defaults.double(forKey: Key.tabFlank) : 24
+        // 默认 88pt：够放 "↓ 1.2M ↑ 32K" 这种最长的指示条，两侧统一
+        self.earWidth = defaults.object(forKey: Key.earWidth) != nil
+            ? defaults.double(forKey: Key.earWidth) : 88
         // 默认完全不显示：收起态就是"什么都不画"，完全藏进物理刘海里（最隐蔽）。
         // 想要常驻指标去「设置 → 刘海常驻指示条」里选。
         self.leftIndicator = defaults.string(forKey: Key.leftIndicator)

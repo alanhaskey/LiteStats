@@ -18,9 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         layout.bodyHeight = Theme.bodyHeight
         layout.cornerRadius = Theme.cornerRadius
         if let preferences {
-            layout.tabFlank = CGFloat(preferences.tabFlank)
-            layout.leftIndicatorWidth = preferences.leftIndicator.indicatorWidth
-            layout.rightIndicatorWidth = preferences.rightIndicator.indicatorWidth
+            layout.earWidth = CGFloat(preferences.earWidth)
+            layout.leftEarActive = preferences.leftIndicator.needsEar
+            layout.rightEarActive = preferences.rightIndicator.needsEar
         }
         return layout
     }
@@ -69,9 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                               onOpenSettings: { [weak self] in self?.showSettings() })
         }
 
-        NSLog("LiteStats 已启动：刘海=%@ 屏幕=%@ 指示条(左=%@ 右=%@) 岛颈=%.0fpt",
+        NSLog("LiteStats 已启动：刘海=%@ 屏幕=%@ 指示条(左=%@ 右=%@) 耳长=%.0fpt",
               NSStringFromRect(geometry.notchRect ?? .zero), NSStringFromRect(geometry.screenFrame),
-              prefs.leftIndicator.rawValue, prefs.rightIndicator.rawValue, prefs.tabFlank)
+              prefs.leftIndicator.rawValue, prefs.rightIndicator.rawValue, prefs.earWidth)
 
         if Trace.isEnabled {
             // 给端到端测试用的 CG 坐标（左上原点）：刘海中心
@@ -97,9 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyPreferences() {
         guard let prefs, let service, let controller = panelController else { return }
         var layout = controller.layout
-        layout.tabFlank = CGFloat(prefs.tabFlank)
-        layout.leftIndicatorWidth = prefs.leftIndicator.indicatorWidth
-        layout.rightIndicatorWidth = prefs.rightIndicator.indicatorWidth
+        layout.earWidth = CGFloat(prefs.earWidth)
+        layout.leftEarActive = prefs.leftIndicator.needsEar
+        layout.rightEarActive = prefs.rightIndicator.needsEar
         controller.applyLayout(layout)
         controller.applyIndicators(left: prefs.leftIndicator, right: prefs.rightIndicator)
         applySamplingIntervals(prefs: prefs, service: service)
