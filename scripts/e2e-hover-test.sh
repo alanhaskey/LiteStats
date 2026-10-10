@@ -67,6 +67,15 @@ APP_PID=""
 sleep 0.3
 
 echo
+# 守护：历史统计必须在启动时初始化（曾经因为重构漏掉 startHistory() 调用而静默失效）
+if grep -q "history enabled" "$TRACE"; then
+  echo "==> 历史统计：$(grep -o 'history enabled .*' "$TRACE" | head -1)"
+else
+  echo "FAIL: 启动日志里没有 history enabled（历史统计没被初始化）：$(grep -o 'history unavailable.*' "$TRACE" | head -1)"
+  kill "$PID" 2>/dev/null || true
+  exit 1
+fi
+
 echo "==> 状态机日志"
 cat "$TRACE"
 

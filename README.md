@@ -16,7 +16,7 @@ macOS 原生轻量系统监控。**信息不占菜单栏、不进 Dock，全部�
 open "dist/LiteStats.app"       # 启动：常驻后台，无 Dock 图标
 ```
 
-当前版本 **1.0.1**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）。换图标：把 1024×1024 PNG 覆盖到 `Resources/AppIcon-1024.png`，跑 `./scripts/make-icon.sh`。
+当前版本 **1.0.2**（更新记录见 [CHANGELOG.md](CHANGELOG.md)）。换图标：把 1024×1024 PNG 覆盖到 `Resources/AppIcon-1024.png`，跑 `./scripts/make-icon.sh`。
 
 > 图标有个坑：源图如果四周留了透明边距，macOS 26 会自动套一层**白色圆角底板**
 > （看起来像"图标里套图标"）。所以 `AppIcon-1024.png` 必须是**满画布**的：

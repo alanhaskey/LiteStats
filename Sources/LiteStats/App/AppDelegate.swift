@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 当前处于展开状态的面板所在屏幕（用来决定采样频率）
     private var expandedDisplays: Set<UInt32> = []
     private var screenObserver: NSObjectProtocol?
+    /// 历史统计初始化失败的原因（点"历史统计"时展示真实原因，而不是笼统说目录不行）
+    private var historyError: Error?
     private var statusItem: StatusItemController?
     private var settingsWindow: SettingsWindowController?
     private var historyWindow: HistoryWindowController?
@@ -67,6 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
         service.start()
+
+        // 历史统计（本地存储；目录不可写时降级，不影响监控本身）
+        // ⚠️ 这行曾在多屏重构时被误删，导致"历史统计不可用"——e2e 现在会断言 trace 里有 history 行
+        startHistory()
 
         if prefs.showMenuBarItem {
             statusItem = StatusItemController(service: service, prefs: prefs,
@@ -241,18 +247,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recorder.start()
             historyStore = store
             historyRecorder = recorder
+            historyError = nil
             NSLog("LiteStats 历史统计已启用：%@", store.storagePath)
+            Trace.log("history enabled \(store.storagePath)")
         } catch {
+            historyError = error
             NSLog("LiteStats 历史统计不可用（不影响监控）：%@", String(describing: error))
+            Trace.log("history unavailable \(error)")
         }
     }
 
     private func showHistory() {
+        // 没初始化成功就先再试一次（比如刚才目录暂时不可写）
+        if historyStore == nil { startHistory() }
+
         guard let store = historyStore else {
             let alert = NSAlert()
             alert.messageText = "历史统计不可用"
-            alert.informativeText = "无法创建本地存储目录。"
-            alert.runModal()
+            if let error = historyError {
+                alert.informativeText = """
+                创建本地存储目录失败：
+
+                \(error.localizedDescription)
+
+                路径：\(HistoryStore.defaultStoragePath)
+                """
+            } else {
+                alert.informativeText = "本地存储尚未初始化。"
+            }
+            alert.addButton(withTitle: "重试")
+            alert.addButton(withTitle: "关闭")
+            if alert.runModal() == .alertFirstButtonReturn {
+                showHistory()          // 重试一次（用户手动触发，不会自动循环）
+            }
             return
         }
         if let existing = historyWindow {

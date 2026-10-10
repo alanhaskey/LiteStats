@@ -824,6 +824,12 @@ public final class HistoryStore: @unchecked Sendable {
     /// 存储目录，给设置界面显示。
     public var storagePath: String { directory.path }
 
+    /// 默认存储目录的路径（拿不到就返回字面量），给界面提示用
+    public static var defaultStoragePath: String {
+        (try? defaultDirectory())?.appendingPathComponent("History").path
+            ?? "~/Library/Application Support/LiteStats/History"
+    }
+
     /// 历史文件占用的总字节数。
     public var storageBytes: UInt64 {
         let manager = FileManager.default
