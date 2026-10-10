@@ -1,9 +1,16 @@
+# 构建产物（SPM）——历史上误提交过，已从全部历史中剔除
 .build/
+.build-*/
 .build-core/
+.build-history/
+.build-thermal/
+.history-demo/
 .swiftpm/
+
+# 打包产物
 dist/
 *.app
+*.dmg
+*.zip
+
 .DS_Store
-.build-history/
-dist/*.zip
-dist/*.dmg
