@@ -3,50 +3,145 @@ import SwiftUI
 
 /// 历史统计窗口的内容。
 ///
-/// 数据来自 `HistoryStore`（本地文件），范围由顶部选择器决定。
-/// 图表用单个 `Canvas` 画完，避免大量视图带来的重绘开销。
+/// 顶部是范围（今天 / 近 7 天 / 本月）+ **月历**：点日历里任意一天就切到那天的数据，
+/// 日历格子按当前指标着色（越深越忙），可以直接看出哪几天用得多。
 struct HistoryView: View {
     let store: HistoryStore
 
-    @State private var range: HistoryRange = .today
+    @State private var selection: HistorySelection = .today
+    @State private var displayMonth: Date = HistoryCalendar.startOfMonth(for: Date())
     @State private var chartMetric: HistoryMetric = .cpu
     @State private var appMetric: HistoryMetric = .network
     @State private var summary: UsageSummary?
-    @State private var showResetConfirm = false
-    @State private var resetNote: String = ""
+    @State private var monthHeat: [Date: Double] = [:]
+    @State private var showResetAlert = false
+    @State private var resetNote = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             header
+            calendarCard
             summaryCards
             chartSection
             appSection
             footer
         }
-        .padding(18)
-        .frame(width: 560, height: 640, alignment: .topLeading)
-        // 显式底色：`.secondary` 这类语义色要靠背景做 vibrancy 混合，
-        // 没有底色时（包括离屏渲染）会直接画不出来。
+        .padding(16)
+        .frame(width: 640, height: 706, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
-        .task(id: range) { reload() }
-        .onAppear { reload() }
+        .task(id: selection) { reloadSummary() }
+        .task(id: HeatKey(month: displayMonth, metric: chartMetric)) { reloadMonthHeat() }
+        .onAppear {
+            reloadSummary()
+            reloadMonthHeat()
+        }
     }
 
     // MARK: - 顶部
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 12) {
             Text("历史统计")
                 .font(.system(size: 15, weight: .semibold))
+            if case .day(let date) = selection {
+                Text(HistoryCalendar.dayTitle(date))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(chartMetric.color)
+            }
             Spacer()
-            Picker("", selection: $range) {
-                ForEach(HistoryRange.allCases) { item in
-                    Text(item.title).tag(item)
-                }
+            Picker("", selection: $selection) {
+                Text("今天").tag(HistorySelection.today)
+                Text("近 7 天").tag(HistorySelection.last7Days)
+                Text("本月").tag(HistorySelection.thisMonth)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 280)
+            .frame(width: 240)
+        }
+    }
+
+    // MARK: - 月历
+
+    private var calendarCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Button {
+                    shiftMonth(-1)
+                } label: {
+                    Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                Text(HistoryCalendar.monthTitle(displayMonth))
+                    .font(.system(size: 12, weight: .medium))
+                    .monospacedDigit()
+                Button {
+                    shiftMonth(1)
+                } label: {
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .disabled(HistoryCalendar.isCurrentMonth(displayMonth))
+                Spacer()
+                Text("格子深浅 = \(chartMetric.title)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.subtleLabel)
+            }
+
+            HStack(spacing: 0) {
+                ForEach(HistoryCalendar.weekdaySymbols, id: \.self) { symbol in
+                    Text(symbol)
+                        .font(.system(size: 9))
+                        .foregroundStyle(Theme.subtleLabel)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+
+            let weeks = HistoryCalendar.weeks(in: displayMonth)
+            let peak = monthHeat.values.max() ?? 0
+            VStack(spacing: 2) {
+                ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
+                    HStack(spacing: 2) {
+                        ForEach(Array(week.enumerated()), id: \.offset) { _, day in
+                            dayCell(day, peak: peak)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.05)))
+    }
+
+    @ViewBuilder
+    private func dayCell(_ day: Date?, peak: Double) -> some View {
+        if let day {
+            let heat = monthHeat[day] ?? 0
+            let ratio = peak > 0 ? min(1, heat / peak) : 0
+            let isSelected = selection == .day(day)
+            let isToday = Calendar.current.isDateInToday(day)
+            let isFuture = day > Date()
+
+            Button {
+                selection = .day(day)
+            } label: {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(chartMetric.color.opacity(isFuture ? 0.02 : 0.06 + 0.55 * ratio))
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .stroke(isSelected ? chartMetric.color : Color.clear, lineWidth: 1.6)
+                    Text("\(Calendar.current.component(.day, from: day))")
+                        .font(.system(size: 10, weight: isToday ? .bold : .regular))
+                        .monospacedDigit()
+                        .foregroundStyle(isFuture ? Theme.subtleLabel : Color.primary)
+                }
+            }
+            .buttonStyle(.plain)
+            .frame(height: 26)
+            .frame(maxWidth: .infinity)
+            .help(heat > 0 ? "\(HistoryCalendar.dayTitle(day)) · \(chartMetric.format(heat))" : HistoryCalendar.dayTitle(day))
+            .disabled(isFuture)
+        } else {
+            Color.clear.frame(height: 26).frame(maxWidth: .infinity)
         }
     }
 
@@ -64,8 +159,7 @@ struct HistoryView: View {
 
     private func cpuText(_ s: UsageSummary?) -> String {
         guard let s, s.cpuSeconds > 0 else { return "—" }
-        let hours = s.cpuSeconds / 3600
-        return String(format: "%.1f 核·时", hours)
+        return String(format: "%.1f 核·时", s.cpuSeconds / 3600)
     }
 
     private func memText(_ s: UsageSummary?) -> String {
@@ -95,7 +189,7 @@ struct HistoryView: View {
     private var chartSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(range == .today || range == .yesterday ? "各时段负载" : "每天负载")
+                Text(isSingleDay ? "各时段负载" : "每天负载")
                     .font(.system(size: 12, weight: .medium))
                 Spacer()
                 Picker("", selection: $chartMetric) {
@@ -110,27 +204,34 @@ struct HistoryView: View {
             Canvas { context, size in
                 drawChart(context: context, size: size)
             }
-            .frame(height: 128)
+            .frame(height: 120)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.04)))
             if let peak = peakBucket {
-                Text("峰值：\(peakLabel(peak)) · \(peakValueText(peak))")
+                Text("峰值 \(peakLabel(peak)) · \(peak.rawText)")
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.subtleLabel)
             }
         }
     }
 
+    private var isSingleDay: Bool {
+        switch selection {
+        case .today, .day: return true
+        case .last7Days, .thisMonth: return false
+        }
+    }
+
     private struct Bucket {
         var label: String
         var date: Date
-        var value: Double      // 0...1 归一化后用于画图
+        var value: Double
         var rawText: String
         var isPeak: Bool
     }
 
     private var buckets: [Bucket] {
         guard let s = summary else { return [] }
-        let byHour = range == .today || range == .yesterday
+        let byHour = isSingleDay
         var groups: [Date: (Double, String)] = [:]
         let calendar = Calendar.current
         for hour in s.hourly {
@@ -138,21 +239,9 @@ struct HistoryView: View {
                 ? calendar.date(bySettingHour: calendar.component(.hour, from: hour.hourStart),
                                 minute: 0, second: 0, of: hour.hourStart) ?? hour.hourStart
                 : calendar.startOfDay(for: hour.hourStart)
-            var value: Double
-            var text: String
-            switch chartMetric {
-            case .cpu:
-                value = hour.cpuPercentOfHour
-                text = Fmt.percent(hour.cpuPercentOfHour, decimals: 0)
-            case .network:
-                value = Double(hour.networkIn + hour.networkOut)
-                text = Fmt.bytes(hour.networkIn + hour.networkOut)
-            case .memory:
-                value = hour.memoryBytesAverage
-                text = Fmt.bytes(hour.memoryBytesAverage)
-            }
-            let existing = groups[key]
-            groups[key] = ((existing?.0 ?? 0) + value, text)
+            let value = chartMetric.value(of: hour)
+            let text = chartMetric.format(value)
+            groups[key] = ((groups[key]?.0 ?? 0) + value, text)
         }
         let sorted = groups.sorted { $0.key < $1.key }
         guard let maxValue = sorted.map(\.value.0).max(), maxValue > 0 else { return [] }
@@ -171,13 +260,10 @@ struct HistoryView: View {
     private var peakBucket: Bucket? { buckets.first { $0.isPeak } }
 
     private func peakLabel(_ bucket: Bucket) -> String {
-        if range == .today || range == .yesterday {
-            return "\(bucket.label):00 时段"
-        }
-        return "\(Calendar.current.component(.month, from: bucket.date))月\(bucket.label)日"
+        isSingleDay
+            ? "\(bucket.label):00 时段"
+            : "\(Calendar.current.component(.month, from: bucket.date)) 月 \(bucket.label) 日"
     }
-
-    private func peakValueText(_ bucket: Bucket) -> String { bucket.rawText }
 
     private func drawChart(context: GraphicsContext, size: CGSize) {
         let items = buckets
@@ -197,13 +283,11 @@ struct HistoryView: View {
             let rect = CGRect(x: x, y: size.height - inset - height, width: barWidth, height: height)
             let color: Color = item.isPeak ? chartMetric.peakColor : chartMetric.color
             context.fill(Path(roundedRect: rect, cornerRadius: min(3, barWidth / 2)), with: .color(color))
-
-            // 只给部分刻度标时间，避免拥挤
             let showLabel = items.count <= 12 || index % 4 == 0 || item.isPeak
             if showLabel {
                 let text = context.resolve(Text(item.label)
                     .font(.system(size: 8))
-                    .foregroundStyle(item.isPeak ? Color.primary : Color.secondary))
+                    .foregroundStyle(item.isPeak ? Color.primary : Theme.subtleLabel))
                 context.draw(text, at: CGPoint(x: x + barWidth / 2, y: size.height - inset + 6), anchor: .top)
             }
         }
@@ -228,17 +312,17 @@ struct HistoryView: View {
             }
             let apps = rankedApps
             if apps.isEmpty {
-                Text("这段时间还没有按应用的记录（需要保持 App 运行一段时间）")
+                Text("这段时间还没有按应用的记录")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.subtleLabel)
-                    .frame(height: 150, alignment: .top)
+                    .frame(height: 110, alignment: .top)
             } else {
                 VStack(spacing: 3) {
                     ForEach(apps) { app in
                         appRow(app)
                     }
                 }
-                .frame(height: 150, alignment: .top)
+                .frame(height: 110, alignment: .top)
             }
         }
     }
@@ -248,21 +332,21 @@ struct HistoryView: View {
         let sorted: [AppUsage]
         switch appMetric {
         case .cpu: sorted = s.apps.sorted { $0.cpuSeconds > $1.cpuSeconds }
-        case .network: sorted = s.apps.sorted { ($0.networkIn + $0.networkOut) > ($1.networkIn + $1.networkOut) }
+        case .network: sorted = s.apps.sorted { $0.networkTotal > $1.networkTotal }
         case .memory: sorted = s.apps.sorted { $0.peakMemoryBytes > $1.peakMemoryBytes }
         }
-        return Array(sorted.prefix(8))
+        return Array(sorted.prefix(6))
     }
 
     private func appRow(_ app: AppUsage) -> some View {
-        let value = appMetric.value(for: app)
-        let maxValue = rankedApps.map { appMetric.value(for: $0) }.max() ?? 1
+        let value = appMetric.value(of: app)
+        let maxValue = rankedApps.map { appMetric.value(of: $0) }.max() ?? 1
         let ratio = maxValue > 0 ? value / maxValue : 0
         return HStack(spacing: 8) {
             Text(app.name)
                 .font(.system(size: 11))
                 .lineLimit(1)
-                .frame(width: 150, alignment: .leading)
+                .frame(width: 170, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3).fill(Color.primary.opacity(0.08))
@@ -272,11 +356,11 @@ struct HistoryView: View {
                 }
             }
             .frame(height: 10)
-            Text(appMetric.text(for: app))
+            Text(appMetric.format(value))
                 .font(.system(size: 10))
                 .monospacedDigit()
                 .foregroundStyle(Theme.subtleLabel)
-                .frame(width: 90, alignment: .trailing)
+                .frame(width: 96, alignment: .trailing)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
         }
@@ -286,33 +370,19 @@ struct HistoryView: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("本地存储：\(store.storagePath)")
-                    .font(.system(size: 9))
-                    .foregroundStyle(Theme.subtleLabel)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text("占用 \(Fmt.bytes(store.storageBytes)) · 分钟明细保留 7 天，小时 180 天，天级永久")
-                    .font(.system(size: 9))
-                    .foregroundStyle(Theme.subtleLabel)
-            }
+            Text("本地存储 \(Fmt.bytes(store.storageBytes))")
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.subtleLabel)
+                .lineLimit(1)
             Spacer()
             if !resetNote.isEmpty {
                 Text(resetNote)
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundStyle(Theme.subtleLabel)
             }
-            Button("清空数据") { showResetConfirm = true }
-                .confirmationDialog("确定清空全部历史统计？", isPresented: $showResetConfirm) {
-                    Button("清空", role: .destructive) {
-                        do {
-                            try store.resetAll()
-                            resetNote = "已清空"
-                            reload()
-                        } catch {
-                            resetNote = "清空失败：\(error.localizedDescription)"
-                        }
-                    }
+            Button("清空数据") { showResetAlert = true }
+                .alert("确定清空全部历史统计？", isPresented: $showResetAlert) {
+                    Button("清空", role: .destructive) { resetAll() }
                     Button("取消", role: .cancel) {}
                 } message: {
                     Text("会删除本地保存的网络流量、CPU/GPU/内存与应用占用记录，且无法恢复。")
@@ -320,38 +390,119 @@ struct HistoryView: View {
         }
     }
 
+    private func resetAll() {
+        do {
+            try store.resetAll()
+            resetNote = "已清空"
+            reloadSummary()
+            reloadMonthHeat()
+        } catch {
+            resetNote = "清空失败：\(error.localizedDescription)"
+        }
+    }
+
     // MARK: - 数据
 
-    private func reload() {
+    private func shiftMonth(_ delta: Int) {
+        guard let next = Calendar.current.date(byAdding: .month, value: delta, to: displayMonth) else { return }
+        displayMonth = HistoryCalendar.startOfMonth(for: next)
+    }
+
+    private func reloadSummary() {
         let now = Date()
-        switch range {
-        case .today: summary = store.today(now: now)
-        case .yesterday:
-            let start = Calendar.current.startOfDay(for: now.addingTimeInterval(-86400))
-            let end = Calendar.current.startOfDay(for: now)
+        let calendar = Calendar.current
+        switch selection {
+        case .today:
+            summary = store.today(now: now)
+        case .last7Days:
+            summary = store.lastDays(7, now: now)
+        case .thisMonth:
+            summary = store.summary(from: HistoryCalendar.startOfMonth(for: now), to: now)
+        case .day(let date):
+            let start = calendar.startOfDay(for: date)
+            let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start
             summary = store.summary(from: start, to: end)
-        case .week: summary = store.lastDays(7, now: now)
-        case .month:
-            let start = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: now)) ?? now
-            summary = store.summary(from: start, to: now)
         }
+    }
+
+    /// 日历热力：取当前显示月份的数据，按天聚合成一个数值
+    private func reloadMonthHeat() {
+        let calendar = Calendar.current
+        guard let end = calendar.date(byAdding: .month, value: 1, to: displayMonth) else { return }
+        let monthSummary = store.summary(from: displayMonth, to: end)
+        var heat: [Date: Double] = [:]
+        for hour in monthSummary.hourly {
+            let key = calendar.startOfDay(for: hour.hourStart)
+            heat[key, default: 0] += chartMetric.value(of: hour)
+        }
+        monthHeat = heat
     }
 }
 
-enum HistoryRange: String, CaseIterable, Identifiable {
-    case today, yesterday, week, month
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .today: return "今天"
-        case .yesterday: return "昨天"
-        case .week: return "近 7 天"
-        case .month: return "本月"
+/// `.task(id:)` 需要一个 Hashable 组合键
+private struct HeatKey: Hashable {
+    let month: Date
+    let metric: HistoryMetric
+}
+
+enum HistorySelection: Hashable {
+    case today
+    case last7Days
+    case thisMonth
+    case day(Date)
+}
+
+/// 日历的纯计算部分（周一起始的 6×7 月网格）
+enum HistoryCalendar {
+    /// 周一为一周起点。用只读常量而不是 var：Swift 6 下可变全局状态不可并发安全。
+    static let calendar: Calendar = {
+        var c = Calendar.current
+        c.firstWeekday = 2      // 周一
+        return c
+    }()
+
+    static let weekdaySymbols = ["一", "二", "三", "四", "五", "六", "日"]
+
+    static func startOfMonth(for date: Date) -> Date {
+        calendar.date(from: calendar.dateComponents([.year, .month], from: date)) ?? date
+    }
+
+    static func isCurrentMonth(_ month: Date) -> Bool {
+        calendar.isDate(month, equalTo: Date(), toGranularity: .month)
+    }
+
+    static func monthTitle(_ month: Date) -> String {
+        let parts = calendar.dateComponents([.year, .month], from: month)
+        return "\(parts.year ?? 0) 年 \(parts.month ?? 0) 月"
+    }
+
+    static func dayTitle(_ date: Date) -> String {
+        let parts = calendar.dateComponents([.month, .day], from: date)
+        return "\(parts.month ?? 0) 月 \(parts.day ?? 0) 日"
+    }
+
+    /// 返回 6 周 × 7 天，不属于本月的格子为 nil
+    static func weeks(in month: Date) -> [[Date?]] {
+        let start = startOfMonth(for: month)
+        guard let range = calendar.range(of: .day, in: .month, for: start) else { return [] }
+        let firstWeekday = calendar.component(.weekday, from: start)
+        // weekday: 周日=1 … 周六=7；网格从周一开始
+        let leading = (firstWeekday - calendar.firstWeekday + 7) % 7
+
+        var slots: [Date?] = Array(repeating: nil, count: leading)
+        for day in range {
+            if let date = calendar.date(byAdding: .day, value: day - 1, to: start) {
+                slots.append(date)
+            }
         }
+        while slots.count % 7 != 0 { slots.append(nil) }
+        while slots.count < 42 { slots.append(nil) }
+
+        return stride(from: 0, to: 42, by: 7).map { Array(slots[$0..<($0 + 7)]) }
     }
 }
 
-enum HistoryMetric: String, CaseIterable, Identifiable {
+enum HistoryMetric: String, CaseIterable, Identifiable, Hashable {
     case cpu, network, memory
     var id: String { rawValue }
     var title: String {
@@ -370,19 +521,26 @@ enum HistoryMetric: String, CaseIterable, Identifiable {
     }
     var peakColor: Color { Color(red: 1.00, green: 0.62, blue: 0.30) }
 
-    func value(for app: AppUsage) -> Double {
+    func value(of hour: HourlyBucket) -> Double {
+        switch self {
+        case .cpu: return hour.cpuSeconds
+        case .network: return Double(hour.networkTotal)
+        case .memory: return hour.memoryBytesAverage
+        }
+    }
+
+    func value(of app: AppUsage) -> Double {
         switch self {
         case .cpu: return app.cpuSeconds
-        case .network: return Double(app.networkIn + app.networkOut)
+        case .network: return Double(app.networkTotal)
         case .memory: return Double(app.peakMemoryBytes)
         }
     }
 
-    func text(for app: AppUsage) -> String {
+    func format(_ value: Double) -> String {
         switch self {
-        case .cpu: return String(format: "%.1f 核·秒", app.cpuSeconds)
-        case .network: return Fmt.bytes(app.networkIn + app.networkOut)
-        case .memory: return Fmt.bytes(app.peakMemoryBytes)
+        case .cpu: return String(format: "%.1f 核·秒", value)
+        case .network, .memory: return Fmt.bytes(value)
         }
     }
 }

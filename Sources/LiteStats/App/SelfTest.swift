@@ -338,6 +338,31 @@ enum SelfTest {
         check("应用排行按影响降序（Xcode 应排在 Safari 前）",
               summary.apps.first?.name == "Xcode", summary.apps.map(\.name).joined(separator: ","))
 
+        // 日历网格纯计算：月首对齐、天数、周一起始
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 10
+        components.day = 1
+        if let october = Calendar.current.date(from: components) {
+            let weeks = HistoryCalendar.weeks(in: october)
+            let days = weeks.flatMap { $0 }.compactMap { $0 }
+            check("日历：2026 年 10 月有 31 天", days.count == 31, "\(days.count)")
+            check("日历：固定 6 周 × 7 天网格",
+                  weeks.count == 6 && weeks.allSatisfy { $0.count == 7 },
+                  "\(weeks.count) 周")
+            if let first = days.first, let last = days.last {
+                check("日历：首格 = 10 月 1 日", Calendar.current.component(.day, from: first) == 1)
+                check("日历：末格 = 10 月 31 日", Calendar.current.component(.day, from: last) == 31)
+                // 周一起始：1 号是周四 → 第一行应有 3 个空位（周一~周三）
+                let leadingNils = weeks[0].prefix { $0 == nil }.count
+                check("日历：周一起始对齐（10/1 是周四 → 前置 3 个空位）", leadingNils == 3, "\(leadingNils)")
+            }
+            check("日历：今天能被识别",
+                  HistoryCalendar.isCurrentMonth(HistoryCalendar.startOfMonth(for: Date())))
+        } else {
+            check("日历：能构造测试月份", false)
+        }
+
         // 窗口能渲染（无法点鼠标，只能离屏渲染确认它真的画出来了）
         let controller = HistoryWindowController(store: store)
         controller.present()

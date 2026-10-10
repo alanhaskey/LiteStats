@@ -9,13 +9,13 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate {
 
     init(store: HistoryStore) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 640),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 706),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false)
         window.title = "LiteStats 历史统计"
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 520, height: 560)
+        window.minSize = NSSize(width: 600, height: 640)
         window.center()
         super.init(window: window)
 

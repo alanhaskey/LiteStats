@@ -58,12 +58,6 @@ struct SettingsView: View {
                     .monospacedDigit()
                     .frame(width: 52, alignment: .trailing)
             }
-            Text("黑耳是刘海左右延伸出来的黑色区域。**两侧长度始终一致、与你选了什么指标无关**，"
-                 + "指标数值在黑耳里居中显示 —— 换指标不会让耳朵忽长忽短。"
-                 + "没选指标的那一侧完全不画黑耳（折叠、展开都不会多出耳朵）。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 6) {
                 Text("预览")
                     .font(.caption)
@@ -72,11 +66,6 @@ struct SettingsView: View {
                              right: preferences.rightIndicator,
                              earWidth: CGFloat(preferences.earWidth))
                     .frame(height: 30)
-                Text("指示条画在刘海两侧的黑色区域里，不占用菜单栏；鼠标悬浮这一带同样会展开面板，"
-                     + "每秒刷新（收起态采样间隔会自动收紧到 1s）。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -95,10 +84,6 @@ struct SettingsView: View {
                     Text(intervalTitle(value)).tag(value)
                 }
             }
-            Text("收起态刷新越慢越省电；CPU 占用大致等于「调用次数 × 单次采样 0.3–1 ms」。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -121,10 +106,6 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("隐藏菜单栏图标后，只能从「活动监视器」或终端 pkill -f LiteStats 退出。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -133,13 +114,7 @@ struct SettingsView: View {
     private var historySection: some View {
         Section("历史统计") {
             HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("记录网络流量、CPU/GPU/内存与应用占用")
-                        .font(.system(size: 12))
-                    Text("本地保存（分钟明细 7 天、小时 180 天、天级永久），可随时清空。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("本地记录流量、CPU/GPU/内存与应用占用")
                 Spacer()
                 Button("打开历史统计…") { onOpenHistory() }
             }
@@ -152,7 +127,6 @@ struct SettingsView: View {
         Section("关于") {
             LabeledContent("版本", value: Self.version)
             LabeledContent("本 App 开销", value: costText)
-            LabeledContent("刘海几何", value: geometryDescription)
             HStack {
                 Button("退出 LiteStats") { NSApp.terminate(nil) }
                 Spacer()
@@ -163,14 +137,6 @@ struct SettingsView: View {
     private static var version: String {
         let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
         return "LiteStats \(short)"
-    }
-
-    private var geometryDescription: String {
-        guard let geometry = ScreenGeometry.resolve() else { return "未知" }
-        if let notch = geometry.notchRect {
-            return String(format: "刘海 %.0f×%.0f pt，菜单栏 %.0f pt", notch.width, notch.height, geometry.menuBarHeight)
-        }
-        return String(format: "无刘海（回退模式），菜单栏 %.0f pt", geometry.menuBarHeight)
     }
 
     private func updateCost() {
