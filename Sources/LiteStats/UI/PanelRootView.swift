@@ -87,7 +87,7 @@ struct PanelRootView: View {
                 .shadow(color: .black.opacity(0.42), radius: 10, y: 4)
 
             MetricsContent(service: service)
-                .offset(y: layout.bodyRect.minY)
+                .offset(x: layout.bodyRect.minX, y: layout.bodyRect.minY)
         }
         .frame(width: layout.windowSize.width, height: layout.windowSize.height, alignment: .topLeading)
     }

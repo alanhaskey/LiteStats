@@ -79,11 +79,17 @@ struct PanelLayout: Equatable {
     /// 展开面板体宽度
     var panelWidth: CGFloat = 400
     /// 展开面板体高度（不含菜单栏带）
-    var bodyHeight: CGFloat = 208
+    var bodyHeight: CGFloat = 234
     /// 收起态热区在刘海左右各外扩多少（有刘海时）
     var collapsedFlank: CGFloat = 26
-    /// 展开态"岛颈"在刘海左右各外扩多少（可见的小黑耳）
+    /// 展开态"岛颈"在刘海左右各外扩多少（可见的小黑耳）。
+    /// 不同机型刘海宽度不同，这里由用户配置（0 = 完全不外扩）。
     var tabFlank: CGFloat = 24
+    /// 常驻指示条占用宽度（0 = 该侧不显示）
+    var leftIndicatorWidth: CGFloat = 0
+    var rightIndicatorWidth: CGFloat = 0
+    /// 指示条文本与刘海边缘之间的最小留白
+    var indicatorInset: CGFloat = 10
     /// 无刘海屏时，收起态小胶囊的尺寸与距屏幕顶部的间距
     var fallbackPillSize = CGSize(width: 132, height: 26)
     var fallbackTopGap: CGFloat = 8
@@ -95,28 +101,46 @@ struct PanelLayout: Equatable {
     /// 顶部菜单栏带高度：有刘海时等于菜单栏高，无刘海时收起物本身就在下方
     var bandHeight: CGFloat { isFallback ? 0 : geometry.menuBarHeight }
 
+    /// 黑耳在刘海左右的实际额外宽度：该侧有指示条时让出位置，否则用用户配置的岛颈宽度
+    var leftEarWidth: CGFloat {
+        leftIndicatorWidth > 0 ? max(tabFlank, leftIndicatorWidth + indicatorInset) : tabFlank
+    }
+    var rightEarWidth: CGFloat {
+        rightIndicatorWidth > 0 ? max(tabFlank, rightIndicatorWidth + indicatorInset) : tabFlank
+    }
+
+    /// 收起态热区左右外扩量（必须 ≥ 耳宽，否则鼠标够不到指示条）
+    var collapsedLeftExtent: CGFloat { max(collapsedFlank, leftEarWidth) }
+    var collapsedRightExtent: CGFloat { max(collapsedFlank, rightEarWidth) }
+
     /// 收起态窗口 frame（全局坐标）
     var collapsedFrame: CGRect {
-        let centerX = geometry.anchorX
         if geometry.hasNotch {
-            let width = (geometry.notchRect?.width ?? 120) + collapsedFlank * 2
+            let notchWidth = geometry.notchRect?.width ?? 120
+            let left = geometry.anchorX - notchWidth / 2 - collapsedLeftExtent
+            let right = geometry.anchorX + notchWidth / 2 + collapsedRightExtent
             let height = geometry.menuBarHeight
-            return CGRect(x: centerX - width / 2, y: geometry.screenTop - height, width: width, height: height)
+            return CGRect(x: left, y: geometry.screenTop - height, width: right - left, height: height)
         }
         let size = fallbackPillSize
         let y = geometry.screenTop - geometry.menuBarHeight - fallbackTopGap - size.height
-        return CGRect(x: centerX - size.width / 2, y: y, width: size.width, height: size.height)
+        return CGRect(x: geometry.anchorX - size.width / 2, y: y, width: size.width, height: size.height)
     }
 
     /// 展开态窗口 frame（全局坐标）。
     /// 不变式：**必须完整包含 `collapsedFrame`**，否则鼠标从刘海移到面板途中会触发移出、导致反复抖动。
     var expandedFrame: CGRect {
-        let centerX = geometry.anchorX
+        // 指示条左右宽度可能不等 → 收起 frame 不再以刘海为对称中心，
+        // 所以展开 frame 不能只"宽度取大"，而要真正取两者的并集。
+        let collapsed = collapsedFrame
+        let centered = CGRect(x: geometry.anchorX - panelWidth / 2, y: 0, width: panelWidth, height: 0)
+        let left = min(centered.minX, collapsed.minX)
+        let right = max(centered.maxX, collapsed.maxX)
         let height = bodyHeight + bodyTopInset + bandHeight
         // 有刘海：窗口顶边贴屏幕顶部（含菜单栏带，用于画"岛颈"）
         // 无刘海：窗口顶边对齐收起胶囊顶边，面板挂在胶囊下方，完全不碰菜单栏
-        let top = geometry.hasNotch ? geometry.screenTop : collapsedFrame.maxY
-        return CGRect(x: centerX - panelWidth / 2, y: top - height, width: panelWidth, height: height)
+        let top = geometry.hasNotch ? geometry.screenTop : collapsed.maxY
+        return CGRect(x: left, y: top - height, width: right - left, height: height)
     }
 
     /// 面板体相对窗口顶部的额外内缩。
@@ -125,21 +149,43 @@ struct PanelLayout: Equatable {
         isFallback ? fallbackPillSize.height + fallbackTopGap : 0
     }
 
-    /// SwiftUI 绘制用：窗口内左上原点坐标下的"岛颈"矩形（有刘海时才有意义）
+    /// SwiftUI 绘制用：窗口内左上原点坐标下的"岛颈"矩形（有刘海时才有意义）。
+    /// 基于**展开**窗口坐标（SwiftUI 内容只在展开时构建，此时窗口 = 展开 frame）。
     var tabRect: CGRect {
-        guard let notch = geometry.notchRect else { return .zero }
-        let width = min(notch.width + tabFlank * 2, panelWidth)
-        return CGRect(x: (panelWidth - width) / 2, y: 0, width: width, height: bandHeight)
+        guard let notch = geometry.notchRect, !isFallback else { return .zero }
+        let frame = expandedFrame
+        let left = notch.minX - leftEarWidth - frame.minX
+        let right = notch.maxX + rightEarWidth - frame.minX
+        return CGRect(x: left, y: 0, width: max(0, right - left), height: bandHeight)
     }
 
-    /// SwiftUI 绘制用：窗口内左上原点坐标下的面板体矩形
+    /// AppKit 指示条绘制用：**收起态**窗口内（左下原点，与容器视图一致）的左右黑耳矩形
+    var collapsedLeftEarRect: CGRect {
+        guard let notch = geometry.notchRect, !isFallback else { return .zero }
+        let frame = collapsedFrame
+        let notchLeft = notch.minX - frame.minX
+        return CGRect(x: 0, y: 0, width: max(0, notchLeft), height: frame.height)
+    }
+
+    var collapsedRightEarRect: CGRect {
+        guard let notch = geometry.notchRect, !isFallback else { return .zero }
+        let frame = collapsedFrame
+        let notchRight = notch.maxX - frame.minX
+        return CGRect(x: notchRight, y: 0, width: max(0, frame.width - notchRight), height: frame.height)
+    }
+
+    /// SwiftUI 绘制用：窗口内左上原点坐标下的面板体矩形。
+    /// 窗口可能因为指示条而比面板宽，此时面板体仍然要**以刘海为居中**。
     var bodyRect: CGRect {
-        CGRect(x: 0, y: bandHeight + bodyTopInset, width: panelWidth, height: bodyHeight)
+        let width = min(panelWidth, expandedFrame.width)
+        let centerInWindow = geometry.anchorX - expandedFrame.minX
+        return CGRect(x: centerInWindow - width / 2, y: bandHeight + bodyTopInset,
+                      width: width, height: bodyHeight)
     }
 
     /// 窗口总尺寸（SwiftUI 根视图尺寸）
     var windowSize: CGSize {
-        CGSize(width: panelWidth, height: bodyHeight + bodyTopInset + bandHeight)
+        CGSize(width: expandedFrame.width, height: bodyHeight + bodyTopInset + bandHeight)
     }
 
     /// 判定某个全局坐标点是否落在"展开时应保持展开"的区域内。

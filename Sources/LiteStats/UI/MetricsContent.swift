@@ -1,7 +1,7 @@
 import LiteStatsCore
 import SwiftUI
 
-/// 面板正文：CPU 概览 + 每核心占用 + GPU/内存/网络 + 磁盘/开机时长页脚。
+/// 面板正文：CPU 概览 + 每核心占用 + GPU/内存/网络 + 温度/风扇 + 磁盘/开机时长页脚。
 ///
 /// 高度是硬约束（`Theme.bodyHeight`），所有区块都给固定高度，
 /// 这样窗口 frame 与内容尺寸永远一致，不会出现裁切。
@@ -18,10 +18,68 @@ struct MetricsContent: View {
             Hairline()
             bottomCells.frame(height: 56)
             Hairline()
+            thermalRow.frame(height: 14)
+            Hairline()
             footer.frame(height: 13)
         }
         .padding(Theme.padding)
         .frame(width: Theme.panelWidth, height: Theme.bodyHeight, alignment: .top)
+    }
+
+    // MARK: - 温度 / 风扇
+
+    private var thermalRow: some View {
+        let thermal = snap?.thermal
+        return HStack(spacing: 16) {
+            HStack(spacing: 4) {
+                Text("温度")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Theme.subtle)
+                Text(thermal?.cpuTemperature.map { String(format: "%.0f°C", $0) } ?? "—")
+                    .font(.system(size: 11, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(temperatureColor(thermal?.cpuTemperature))
+            }
+            if let gpuTemperature = thermal?.gpuTemperature {
+                HStack(spacing: 4) {
+                    Text("GPU")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Theme.subtle)
+                    Text(String(format: "%.0f°C", gpuTemperature))
+                        .font(.system(size: 11, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(temperatureColor(gpuTemperature))
+                }
+            }
+            HStack(spacing: 4) {
+                Text("风扇")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Theme.subtle)
+                Text(fanText(thermal))
+                    .font(.system(size: 11, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.value)
+            }
+            Spacer(minLength: 0)
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+    }
+
+    private func fanText(_ thermal: ThermalStats?) -> String {
+        guard let fans = thermal?.fans, !fans.isEmpty else { return "—" }
+        let rpms = fans.compactMap { $0.rpm }.map { String(Int($0.rounded())) }
+        guard !rpms.isEmpty else { return "—" }
+        return rpms.joined(separator: " · ") + " rpm"
+    }
+
+    private func temperatureColor(_ celsius: Double?) -> Color {
+        guard let celsius else { return Theme.subtle }
+        switch celsius {
+        case ..<60: return Color(red: 0.42, green: 0.85, blue: 0.60)
+        case ..<80: return Color(red: 1.00, green: 0.75, blue: 0.35)
+        default: return Color(red: 1.00, green: 0.42, blue: 0.42)
+        }
     }
 
     // MARK: - CPU 概览
@@ -79,26 +137,38 @@ struct MetricsContent: View {
         return cores
     }
 
+    /// 每核心占用条。
+    ///
+    /// 刻意用**单个 Canvas** 画完 15 根条 + 15 个数字，而不是 15 组 VStack/Shape/Text（≈45 个视图）：
+    /// 实测展开态的每秒重绘成本与视图数量强相关，视图化版本一次数据更新要 ~30ms，
+    /// 集中到一个 Canvas 后只走一次绘制。
     private var coreGrid: some View {
-        HStack(alignment: .bottom, spacing: 3) {
-            ForEach(Array(coreUsages.enumerated()), id: \.offset) { _, usage in
-                VStack(spacing: 2) {
-                    ZStack(alignment: .bottom) {
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(Color.white.opacity(0.10))
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(Theme.cpu(usage))
-                            .frame(height: max(2, 22 * min(max(usage, 0), 1)))
-                    }
-                    .frame(height: 22)
-                    Text(Fmt.percentInt(usage))
+        let usages = coreUsages
+        return Canvas { context, size in
+            let count = max(usages.count, 1)
+            let spacing: CGFloat = 3
+            let columnWidth = max(1, (size.width - spacing * CGFloat(count - 1)) / CGFloat(count))
+            let barHeight: CGFloat = 22
+            for (index, usage) in usages.enumerated() {
+                let clamped = min(max(usage, 0), 1)
+                let x = CGFloat(index) * (columnWidth + spacing)
+
+                let track = CGRect(x: x, y: 0, width: columnWidth, height: barHeight)
+                context.fill(Path(roundedRect: track, cornerRadius: 2), with: .color(.white.opacity(0.10)))
+
+                let filled = max(2, barHeight * clamped)
+                let bar = CGRect(x: x, y: barHeight - filled, width: columnWidth, height: filled)
+                context.fill(Path(roundedRect: bar, cornerRadius: 2), with: .color(Theme.cpu(clamped)))
+
+                let label = context.resolve(
+                    Text(Fmt.percentInt(clamped))
                         .font(.system(size: 8, weight: .medium))
                         .monospacedDigit()
-                        .foregroundStyle(Theme.label)
-                }
-                .frame(maxWidth: .infinity)
+                        .foregroundStyle(Theme.label))
+                context.draw(label, at: CGPoint(x: x + columnWidth / 2, y: barHeight + 1), anchor: .top)
             }
         }
+        .allowsHitTesting(false)
     }
 
     // MARK: - GPU / 内存 / 网络

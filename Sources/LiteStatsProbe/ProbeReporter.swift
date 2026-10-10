@@ -53,10 +53,35 @@ final class ProbeReporter {
                          formatBytes(s.network.download), formatBytes(s.network.upload), iface)
         let disk = s.disk.map { String(format: "%4.1f%%", $0.usage * 100) } ?? " n/a"
         return String(format: "#%02d %5.1f%% cpu[u%4.1f s%4.1f i%4.1f] load %.2f/%.2f/%.2f "
-                      + "cores[%@] gpu %@ mem %@ net %@ disk %@ %.2fms",
+                      + "cores[%@] gpu %@ mem %@ net %@ disk %@ %@ %.2fms",
                       s.sampleIndex, s.cpu.total * 100, s.cpu.user * 100, s.cpu.system * 100,
                       s.cpu.idle * 100, s.cpu.load1, s.cpu.load5, s.cpu.load15,
-                      cores, gpu, mem, net, disk, sampleMs)
+                      cores, gpu, mem, net, disk, thermalSummary(s.thermal), sampleMs)
+    }
+
+    /// 温度 / 风扇的人类可读摘要：`温度 CPU 52.0°C(最高 tdie) 电池 34.9°C 风扇 2317/2502rpm`
+    /// 完全取不到时整段是 `温度 n/a 风扇 n/a`（不会显示 0，也不会打印 -9201°C 这种垃圾）。
+    private func thermalSummary(_ thermal: ThermalStats) -> String {
+        guard thermal.sourceDescription != nil else { return "温度 n/a 风扇 n/a" }
+
+        var pieces: [String] = []
+        pieces.append(thermal.cpuTemperature.map { String(format: "CPU %.1f°C(最高 tdie)", $0) }
+                      ?? "CPU n/a")
+        if let gpu = thermal.gpuTemperature {
+            pieces.append(String(format: "GPU %.1f°C", gpu))
+        }
+        pieces.append(thermal.batteryTemperature.map { String(format: "电池 %.1f°C", $0) }
+                      ?? "电池 n/a")
+
+        let fans: String
+        if thermal.fans.isEmpty {
+            fans = "n/a"
+        } else {
+            fans = thermal.fans
+                .map { $0.rpm.map { String(format: "%.0f", $0) } ?? "n/a" }
+                .joined(separator: "/") + "rpm"
+        }
+        return "温度 \(pieces.joined(separator: " ")) 风扇 \(fans)"
     }
 
     // MARK: - JSON
@@ -103,10 +128,31 @@ final class ProbeReporter {
         out += "\"iface\":\(iface),\"connected\":\(s.network.isConnected)},"
         out += "\"disk\":\(disk),"
         out += "\"uptime\":\(number(s.uptime, decimals: 3)),"
-        out += "\"thermal\":\"\(thermalName(s.thermalState))\","
+        // ProcessInfo 的热压力状态改名为 thermalState：thermal 这个 key 留给下面的温度/风扇对象。
+        out += "\"thermalState\":\"\(thermalName(s.thermalState))\","
+        out += "\"thermal\":\(thermalJSON(s.thermal)),"
         out += "\"sampleMs\":\(number(sampleMs, decimals: 3))"
         out += "}"
         return out
+    }
+
+    /// 温度 / 风扇对象。取不到的字段是 null（不是 0），整体结构恒定便于脚本消费。
+    private func thermalJSON(_ thermal: ThermalStats) -> String {
+        let cpu = thermal.cpuTemperature.map { number($0, decimals: 2) } ?? "null"
+        let gpu = thermal.gpuTemperature.map { number($0, decimals: 2) } ?? "null"
+        let battery = thermal.batteryTemperature.map { number($0, decimals: 2) } ?? "null"
+        let fans = thermal.fans.map { fan -> String in
+            let rpm = fan.rpm.map { number($0, decimals: 1) } ?? "null"
+            let min = fan.minRPM.map { number($0, decimals: 1) } ?? "null"
+            let max = fan.maxRPM.map { number($0, decimals: 1) } ?? "null"
+            let target = fan.targetRPM.map { number($0, decimals: 1) } ?? "null"
+            return "{\"index\":\(fan.index),\"rpm\":\(rpm),\"min\":\(min),"
+                 + "\"max\":\(max),\"target\":\(target)}"
+        }.joined(separator: ",")
+        let source = thermal.sourceDescription.map { "\"\(escape($0))\"" } ?? "null"
+        return "{\"cpuTemp\":\(cpu),\"gpuTemp\":\(gpu),\"batteryTemp\":\(battery),"
+             + "\"sensorCount\":\(thermal.sensors.count),\"fans\":[\(fans)],"
+             + "\"readMs\":\(number(thermal.readMillis, decimals: 3)),\"source\":\(source)}"
     }
 
     // MARK: - 小工具

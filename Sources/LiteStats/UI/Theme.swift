@@ -5,8 +5,8 @@ enum Theme {
     // 面板
     static let panelWidth: CGFloat = 400
     /// 正文高度：与 `MetricsContent` 内各区块高度之和严格一致，避免裁切
-    /// 58 + 1 + 36 + 1 + 56 + 1 + 13 + 6×6(间距) + 16×2(内边距) = 234
-    static let bodyHeight: CGFloat = 234
+    /// 58 + 1 + 36 + 1 + 56 + 1 + 14 + 1 + 13 + 7×6(间距) + 16×2(内边距) = 255
+    static let bodyHeight: CGFloat = 255
     static let cornerRadius: CGFloat = 20
     static let tabCornerRadius: CGFloat = 10
     static let padding: CGFloat = 16

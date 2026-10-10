@@ -8,16 +8,17 @@
 #   ./scripts/e2e-hover-test.sh
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRATCH="$ROOT/.build"
+source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+
+ROOT="$LITESTATS_ROOT"
 TRACE="$(mktemp -t litestats-trace).log"
 WARP="$(mktemp -d)/cursor-warp"
 cd "$ROOT"
 
 echo "==> 编译"
-swift build --disable-sandbox --scratch-path "$SCRATCH" --product LiteStats >/dev/null
-BIN_DIR="$(swift build --disable-sandbox --scratch-path "$SCRATCH" --show-bin-path | tail -1)"
-swiftc -O -o "$WARP" "$ROOT/tools/cursor-warp.swift" -framework CoreGraphics
+swift build "${LITESTATS_FLAGS[@]}" --product LiteStats >/dev/null
+BIN_DIR="$(litestats_bin_dir debug)"
+swiftc -O -module-cache-path "$(mktemp -d)" -o "$WARP" "$ROOT/tools/cursor-warp.swift" -framework CoreGraphics
 
 APP_PID=""
 cleanup() {

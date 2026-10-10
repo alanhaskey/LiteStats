@@ -17,13 +17,16 @@ public final class SystemMonitor: @unchecked Sendable {
     private let gpuSensor: GPUSensor
     private let networkSensor: NetworkSensor
     private let diskSensor: DiskSensor
+    private let thermalSensor: ThermalSampler
 
     /// 下一次 sample() 的序号（0 = 基线）。
     private var nextSampleIndex = 0
-    /// 单调递增的采样计数，用于 GPU 隔拍刷新。
+    /// 单调递增的采样计数，用于 GPU / 温度隔拍刷新。
     private var tick = 0
     /// GPU 隔拍采样的缓存值。
     private var cachedGPU: GPUStats = .unavailable
+    /// 温度 / 风扇隔拍采样的缓存值。
+    private var cachedThermal: ThermalStats = .unavailable
 
     public init(configuration: MonitorConfiguration = .init()) {
         self._configuration = configuration
@@ -32,6 +35,7 @@ public final class SystemMonitor: @unchecked Sendable {
         self.gpuSensor = GPUSensor()
         self.networkSensor = NetworkSensor()
         self.diskSensor = DiskSensor()
+        self.thermalSensor = ThermalSampler()
     }
 
     /// 采样配置。读写在锁内完成（`@unchecked Sendable` 下这是必要的）。
@@ -67,6 +71,20 @@ public final class SystemMonitor: @unchecked Sendable {
 
         let disk = _configuration.includeDisk ? diskSensor.sample() : nil
 
+        // 温度 / 风扇：HID 读温度 + SMC 读风扇（实测 ~2 ms），按配置隔 N 拍采一次，
+        // 其余拍复用缓存；includeThermal = false 时直接降级为 .unavailable。
+        let thermal: ThermalStats
+        if _configuration.includeThermal {
+            if (tick - 1) % _configuration.normalizedThermalInterval == 0 {
+                thermal = thermalSensor.sample(tick: tick)
+                cachedThermal = thermal
+            } else {
+                thermal = cachedThermal
+            }
+        } else {
+            thermal = .unavailable
+        }
+
         let cpuStats = CPUStats(total: cpu.total, user: cpu.user, system: cpu.system,
                                 idle: cpu.idle, perCore: cpu.perCore, coreCount: cpu.coreCount,
                                 load1: cpu.load1, load5: cpu.load5, load15: cpu.load15)
@@ -79,11 +97,16 @@ public final class SystemMonitor: @unchecked Sendable {
                               disk: disk,
                               uptime: ProcessInfo.processInfo.systemUptime,
                               thermalState: ProcessInfo.processInfo.thermalState,
-                              sampleIndex: index)
+                              sampleIndex: index,
+                              thermal: thermal)
     }
 
+    /// 实际读取温度 / 风扇的次数（隔拍复用时不会增加）。仅测试使用，不参与公开契约。
+    var thermalReadCount: Int { lock.withLock { thermalSensor.readCount } }
+
     /// 清空增量状态：下一次 `sample()` 重新返回基线（sampleIndex == 0，CPU/网络速率为 0）。
-    /// 注意：GPU 句柄与磁盘容量不是增量状态，会被保留（避免重新枚举 IORegistry）。
+    /// 注意：GPU 句柄、HID 客户端 / SMC 连接与磁盘容量不是增量状态，会被保留
+    /// （避免重新枚举 IORegistry / 重新打开 AppleSMC）；tick 归零后下一拍会重新读一次温度。
     public func reset() {
         lock.lock()
         defer { lock.unlock() }

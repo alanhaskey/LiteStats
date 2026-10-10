@@ -52,6 +52,9 @@ final class MonitorService {
         }
     }
 
+    /// 每拍数据到达时回调。常驻指示条走这条路（纯 AppKit 绘制，不经过 SwiftUI）。
+    var onSnapshot: ((SystemSnapshot) -> Void)?
+
     private let monitor: SystemMonitor
     private let queue = DispatchQueue(label: "com.litestats.sampler", qos: .utility)
     private var timer: DispatchSourceTimer?
@@ -76,6 +79,24 @@ final class MonitorService {
 
     var coreCount: Int { monitor.coreCount }
     var interval: TimeInterval { isPanelExpanded ? intervalExpanded : intervalCollapsed }
+
+    /// 是否有人在看温度/风扇（面板展开，或指示条选了温度/风扇）。
+    ///
+    /// 为什么需要这个开关：Apple Silicon 上读一个温度传感器要 ~0.75ms 的同步 IPC，
+    /// 即使只读 8 个切片也要 ~10ms。没人看的时候没必要每 5 拍就花这笔钱，
+    /// 所以这里把刷新周期从 5 拍放宽到 30 拍（10ms/30s ≈ 0.03% CPU）。
+    var thermalIsVisible = false {
+        didSet {
+            guard oldValue != thermalIsVisible else { return }
+            applyThermalCadence()
+        }
+    }
+
+    private func applyThermalCadence() {
+        var config = monitor.configuration
+        config.thermalRefreshEveryNTicks = thermalIsVisible ? 5 : 30
+        monitor.configuration = config
+    }
 
     func setIntervals(expanded: TimeInterval, collapsed: TimeInterval) {
         intervalExpanded = max(0.2, expanded)
@@ -137,6 +158,7 @@ final class MonitorService {
         gpuHistory.append(snap.gpu.utilization ?? 0)
         downHistory.append(snap.network.download)
         upHistory.append(snap.network.upload)
+        onSnapshot?(snap)
     }
 
     @objc private func systemWillSleep() {

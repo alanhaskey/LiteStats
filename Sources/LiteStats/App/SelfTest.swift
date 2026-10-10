@@ -53,7 +53,10 @@ enum SelfTest {
 
         check("展开 frame 完整包含收起 frame", layout.expandedFrame.contains(layout.collapsedFrame))
         check("两态水平居中对齐", abs(layout.collapsedFrame.midX - layout.expandedFrame.midX) < 0.5)
-        check("面板体宽度 == 窗口宽度", abs(layout.bodyRect.width - layout.expandedFrame.width) < 0.5)
+        check("面板体以刘海为水平居中",
+              abs(layout.bodyRect.midX - (geometry.anchorX - layout.expandedFrame.minX)) < 0.5,
+              "面板体中轴 \(layout.bodyRect.midX) vs 刘海中心 \(geometry.anchorX - layout.expandedFrame.minX)")
+        check("面板体不超出窗口", layout.bodyRect.width <= layout.expandedFrame.width + 0.5)
         check("窗口高度 == 岛颈 + 面板体",
               abs(layout.windowSize.height - layout.bodyRect.maxY) < 0.5,
               "窗口 \(layout.windowSize.height) vs 内容 \(layout.bodyRect.maxY)")
@@ -133,6 +136,9 @@ enum SelfTest {
         check("收起后窗口 frame 复位", nearlyEqual(controller.windowFrame, layout.collapsedFrame),
               rect(controller.windowFrame))
 
+        // MARK: 4b. 常驻指示条（收起态画在刘海两侧的黑耳里）
+        verifyIndicators(geometry: geometry, baseLayout: layout, service: service)
+
         // MARK: 5. 采样数据（端到端）
 
         service.isPanelExpanded = true
@@ -186,6 +192,10 @@ enum SelfTest {
         dataController.stop()
         info("带数据渲染时的采样：\(dataService.sampleCount) 次，末次耗时 \(String(format: "%.2f", dataService.lastSampleMillis)) ms")
 
+        // MARK: 7. 设置界面
+
+        verifySettingsWindow(service: dataService)
+
         print("=== 自检结果：\(checkCount - failures.count)/\(checkCount) 通过 ===")
         if !failures.isEmpty {
             print("失败项：\(failures.joined(separator: "、"))")
@@ -196,6 +206,71 @@ enum SelfTest {
     }
 
     // MARK: - 工具
+
+    /// 常驻指示条验证：几何（黑耳放得下指示条、不越界/不覆盖刘海）+ 真实绘制 + 展开后自动隐藏
+    private static func verifyIndicators(geometry: ScreenGeometry, baseLayout: PanelLayout,
+                                         service: MonitorService) {
+        guard geometry.hasNotch, let notch = geometry.notchRect else {
+            info("无刘海屏幕，跳过指示条验证（回退模式下用菜单栏下方胶囊）")
+            return
+        }
+
+        var layout = baseLayout
+        layout.leftIndicatorWidth = IndicatorMetric.cpu.indicatorWidth
+        layout.rightIndicatorWidth = IndicatorMetric.network.indicatorWidth
+        let leftEar = layout.collapsedLeftEarRect
+        let rightEar = layout.collapsedRightEarRect
+        info("指示条布局：收起 frame=\(rect(layout.collapsedFrame)) 左耳=\(rect(leftEar)) 右耳=\(rect(rightEar))")
+
+        check("左侧黑耳容得下指示条", leftEar.width >= layout.leftIndicatorWidth + 2,
+              "耳 \(leftEar.width) vs 指示条 \(layout.leftIndicatorWidth)")
+        check("右侧黑耳容得下指示条", rightEar.width >= layout.rightIndicatorWidth + 2,
+              "耳 \(rightEar.width) vs 指示条 \(layout.rightIndicatorWidth)")
+        check("黑耳不侵占刘海区域",
+              leftEar.maxX <= notch.minX - layout.collapsedFrame.minX + 0.5
+              && rightEar.minX >= notch.maxX - layout.collapsedFrame.minX - 0.5)
+        check("收起热区比刘海宽出指示条部分",
+              layout.collapsedFrame.width > notch.width + layout.leftIndicatorWidth)
+        check("展开 frame 仍完整包含收起 frame", layout.expandedFrame.contains(layout.collapsedFrame))
+
+        let controller = NotchPanelController(layout: layout, service: service)
+        controller.hoverEnabled = false
+        controller.applyIndicators(left: .cpu, right: .network)
+        controller.start()
+        pump(0.25)
+
+        check("指示条已激活", controller.indicatorIsActive)
+        check("收起态指示条可见", !controller.indicatorIsHidden)
+        check("指示条布局下窗口 frame 正确",
+              nearlyEqual(controller.windowFrame, layout.collapsedFrame), rect(controller.windowFrame))
+
+        if let bitmap = controller.renderContentBitmap() {
+            let scale = CGFloat(bitmap.pixelsWide) / max(layout.collapsedFrame.width, 1)
+            // 窗口内左上原点坐标：黑耳占满整个高度，x 与左下原点一致
+            let leftPoint = CGPoint(x: leftEar.midX, y: leftEar.height / 2)
+            let rightPoint = CGPoint(x: rightEar.midX, y: rightEar.height / 2)
+            let notchPoint = CGPoint(x: layout.collapsedFrame.width / 2, y: layout.collapsedFrame.height / 2)
+            let leftAlpha = alphaAt(bitmap, point: leftPoint, scale: scale)
+            let rightAlpha = alphaAt(bitmap, point: rightPoint, scale: scale)
+            let notchAlpha = alphaAt(bitmap, point: notchPoint, scale: scale)
+            let leftCover = alphaCoverage(bitmap, region: CGRect(x: 0, y: 0, width: leftEar.width, height: leftEar.height), scale: scale)
+            let rightCover = alphaCoverage(bitmap, region: CGRect(x: rightEar.minX, y: 0, width: rightEar.width, height: rightEar.height), scale: scale)
+
+            info(String(format: "指示条离屏渲染：左耳覆盖率 %.1f%%（alpha=%d）右耳覆盖率 %.1f%%（alpha=%d）刘海区 alpha=%d",
+                        leftCover * 100, leftAlpha, rightCover * 100, rightAlpha, notchAlpha))
+            check("左耳已绘制出指示条", leftCover > 0.80)
+            check("右耳已绘制出指示条", rightCover > 0.80)
+            check("刘海正上方保持透明（没有画成整条黑带）", notchAlpha < 24, "alpha=\(notchAlpha)")
+            dump(bitmap, suffix: "indicators")
+        } else {
+            check("指示条离屏渲染可用", false, "bitmapImageRepForCachingDisplay 返回 nil")
+        }
+
+        controller.forceState(.expanded, animated: false)
+        pump(0.45)
+        check("展开后指示条自动隐藏（由岛颈接管）", controller.indicatorIsHidden)
+        controller.stop()
+    }
 
     private static func pump(_ seconds: TimeInterval) {
         RunLoop.current.run(until: Date().addingTimeInterval(seconds))
@@ -220,6 +295,56 @@ enum SelfTest {
     }
 
     // MARK: - 位图取样
+
+    /// 设置界面验证：能打开、能渲染出内容、关闭后释放。
+    /// （无法用鼠标点，所以用离屏渲染确认它真的画出来了）
+    private static func verifySettingsWindow(service: MonitorService) {
+        let suite = "dev.litestats.selftest"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            check("设置界面：可创建独立偏好域", false)
+            return
+        }
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = Preferences(defaults: defaults)
+        preferences.leftIndicator = .cpu
+        preferences.rightIndicator = .temperature
+        preferences.tabFlank = 30
+
+        let controller = SettingsWindowController(preferences: preferences, service: service)
+        controller.present()
+        pump(0.8)
+
+        guard let window = controller.window, let content = window.contentView else {
+            check("设置窗口可以打开", false, "window/contentView 为 nil")
+            return
+        }
+        check("设置窗口可以打开", window.isVisible)
+        check("设置窗口标题正确", window.title == "LiteStats 设置", window.title)
+
+        if let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+            content.cacheDisplay(in: content.bounds, to: bitmap)
+            let scale = CGFloat(bitmap.pixelsWide) / max(content.bounds.width, 1)
+            let whole = CGRect(origin: .zero, size: content.bounds.size)
+            let coverage = alphaCoverage(bitmap, region: whole, scale: scale, threshold: 128)
+            info(String(format: "设置界面离屏渲染 %d×%dpx 覆盖率 %.1f%%",
+                        bitmap.pixelsWide, bitmap.pixelsHigh, coverage * 100))
+            check("设置界面渲染出内容（覆盖率 > 85%）", coverage > 0.85,
+                  String(format: "%.1f%%", coverage * 100))
+            dump(bitmap, suffix: "settings")
+        } else {
+            check("设置界面离屏渲染可用", false, "bitmapImageRepForCachingDisplay 返回 nil")
+        }
+
+        // 偏好改动要能落盘（用独立 suite，不污染真实设置）
+        let reread = Preferences(defaults: defaults)
+        check("设置项可持久化", reread.leftIndicator == .cpu && reread.rightIndicator == .temperature
+              && abs(reread.tabFlank - 30) < 0.01,
+              "左=\(reread.leftIndicator.rawValue) 右=\(reread.rightIndicator.rawValue) 岛颈=\(reread.tabFlank)")
+
+        window.close()
+        pump(0.2)
+        defaults.removePersistentDomain(forName: suite)
+    }
 
     private static func alphaIndex(_ bitmap: NSBitmapImageRep) -> Int? {
         guard bitmap.hasAlpha else { return nil }

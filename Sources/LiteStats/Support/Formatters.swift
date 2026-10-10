@@ -26,6 +26,15 @@ enum Fmt {
         return bytes(value) + "/s"
     }
 
+    /// 字节/秒 → 极简形式（常驻指示条宽度有限）："1.2G" / "1.2M" / "32K" / "0"
+    static func compactRate(_ value: Double) -> String {
+        guard value >= 1 else { return "0" }
+        if value >= 1_073_741_824 { return String(format: "%.1fG", value / 1_073_741_824) }
+        if value >= 1_048_576 { return String(format: "%.1fM", value / 1_048_576) }
+        if value >= 1024 { return String(format: "%.0fK", value / 1024) }
+        return String(format: "%.0f", value)
+    }
+
     /// 0...1 → “12.4%”
     static func percent(_ value: Double, decimals: Int = 1) -> String {
         let pct = min(max(value, 0), 1) * 100

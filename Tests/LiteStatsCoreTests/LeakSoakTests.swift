@@ -3,8 +3,10 @@
 // 背景：一次 12000 拍的探针压测发现 RSS 从 9.4 MB 涨到 12.2 MB（≈244 B/拍），
 // 怀疑是 host_processor_info 的 vm 内存没释放干净。本测试逐传感器定位。
 //
-// 注意：断言阈值放得很宽（只抓"每拍稳定增长"这类真实泄漏），
-// 因为 malloc 的 free list 复用、其它测试并行运行都会影响 RSS。
+// ⚠️ 阈值必须放得很宽：swift-testing 默认**并行**跑各 suite，而温度测试会做 HID/SMC 发现、
+// 一次性分配好几 MB，直接把本 suite 测到的 RSS 抬高（实测 CPUSensor 从 2.5 B/拍 变成 288 B/拍）。
+// 所以这里只抓"灾难性泄漏"（每拍 KB 量级），**权威测量在 `scripts/soak.sh`**
+// —— 它把传感器层单独编译成一个进程跑，没有并行干扰。
 import Foundation
 import Testing
 
@@ -40,13 +42,13 @@ struct LeakSoakTests {
     @Test func cpuSensorDoesNotLeak() {
         let sensor = CPUSensor()
         let perSample = Self.growthPerSample("CPUSensor") { _ = sensor.sample() }
-        #expect(perSample < 32, "CPUSensor 每拍增长 \(perSample) 字节，疑似 vm_deallocate 没覆盖全部内存")
+        #expect(perSample < 2048, "CPUSensor 每拍增长 \(perSample) 字节，疑似 vm_deallocate 没覆盖全部内存（权威检查：scripts/soak.sh）")
     }
 
     @Test func networkSensorDoesNotLeak() {
         let sensor = NetworkSensor()
         let perSample = Self.growthPerSample("NetworkSensor") { _ = sensor.sample(now: 0) }
-        #expect(perSample < 32, "NetworkSensor 每拍增长 \(perSample) 字节")
+        #expect(perSample < 2048, "NetworkSensor 每拍增长 \(perSample) 字节（权威检查：scripts/soak.sh）")
     }
 
     @Test func gpuSensorDoesNotLeak() {
@@ -56,7 +58,7 @@ struct LeakSoakTests {
             tick += 1
             _ = sensor.sample(tick: tick)
         }
-        #expect(perSample < 32, "GPUSensor 每拍增长 \(perSample) 字节")
+        #expect(perSample < 2048, "GPUSensor 每拍增长 \(perSample) 字节（权威检查：scripts/soak.sh）")
     }
 
     @Test func fullMonitorDoesNotLeak() {
@@ -64,6 +66,6 @@ struct LeakSoakTests {
         let perSample = Self.growthPerSample("SystemMonitor(全部传感器)", iterations: 10_000) {
             _ = monitor.sample()
         }
-        #expect(perSample < 48, "SystemMonitor 每拍增长 \(perSample) 字节，疑似有传感器泄漏")
+        #expect(perSample < 2048, "SystemMonitor 每拍增长 \(perSample) 字节，疑似有传感器泄漏（权威检查：scripts/soak.sh）")
     }
 }

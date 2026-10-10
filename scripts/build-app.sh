@@ -1,22 +1,20 @@
 #!/bin/bash
-# 组装 LiteStats.app（本机只有 Command Line Tools，没有 Xcode，所以不能用 xcodebuild）
+# 组装 LiteStats.app（本机没有可用 Xcode 工具链，所以不能用 xcodebuild）
 #
 #   ./scripts/build-app.sh            # release
 #   ./scripts/build-app.sh debug      # debug
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG="${1:-release}"
-SCRATCH="$ROOT/.build"
-APP="$ROOT/dist/LiteStats.app"
+source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
-cd "$ROOT"
+CONFIG="${1:-release}"
+APP="$LITESTATS_ROOT/dist/LiteStats.app"
+cd "$LITESTATS_ROOT"
 
 echo "==> 编译 ($CONFIG)"
-# --disable-sandbox 是必须的：SwiftPM 的 sandbox-exec 在受限环境下无法 apply
-swift build --disable-sandbox --scratch-path "$SCRATCH" -c "$CONFIG" --product LiteStats
+swift build "${LITESTATS_FLAGS[@]}" -c "$CONFIG" --product LiteStats
 
-BIN_DIR="$(swift build --disable-sandbox --scratch-path "$SCRATCH" -c "$CONFIG" --show-bin-path | tail -1)"
+BIN_DIR="$(litestats_bin_dir "$CONFIG")"
 if [[ ! -x "$BIN_DIR/LiteStats" ]]; then
   echo "找不到可执行文件：$BIN_DIR/LiteStats" >&2
   exit 1
@@ -26,7 +24,7 @@ echo "==> 组装 $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/LiteStats" "$APP/Contents/MacOS/LiteStats"
-cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+cp "$LITESTATS_ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 echo "==> 临时签名（ad-hoc）"

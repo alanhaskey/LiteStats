@@ -13,13 +13,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let toggleItem = NSMenuItem(title: "展开面板", action: nil, keyEquivalent: "")
     private let statsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let intervalItems: [NSMenuItem]
+    private let onOpenSettings: () -> Void
 
     private static let intervalChoices: [Double] = [0.5, 1, 2, 5]
 
-    init(service: MonitorService, prefs: Preferences, panelController: NotchPanelController) {
+    init(service: MonitorService, prefs: Preferences, panelController: NotchPanelController,
+         onOpenSettings: @escaping () -> Void) {
         self.service = service
         self.prefs = prefs
         self.panelController = panelController
+        self.onOpenSettings = onOpenSettings
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.intervalItems = Self.intervalChoices.map { value in
             NSMenuItem(title: Self.intervalTitle(value), action: nil, keyEquivalent: "")
@@ -37,6 +40,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
         buildMenu(menu)
+    }
+
+    /// 设置里关掉"菜单栏图标"时调用
+    func remove() {
+        NSStatusBar.system.removeStatusItem(statusItem)
     }
 
     private func buildMenu(_ menu: NSMenu) {
@@ -62,9 +70,17 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        let settings = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
+
         let quit = NSMenuItem(title: "退出 LiteStats", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         menu.addItem(quit)
+    }
+
+    @objc private func openSettings() {
+        onOpenSettings()
     }
 
     private static func intervalTitle(_ value: Double) -> String {

@@ -12,6 +12,11 @@ struct ProbeSummary {
     var netOK = 0
     var gpuOK = 0
     var diskOK = 0
+    /// 温度读数成功（sourceDescription != nil）/ 至少读到 1 个风扇的拍数。
+    var thermalOK = 0
+    var fanOK = 0
+    /// 单次温度 + 风扇读取耗时的最大值（毫秒）。
+    var maxThermalReadMs = 0.0
 
     mutating func record(_ snapshot: SystemSnapshot, sampleMs: Double) {
         samples += 1
@@ -27,10 +32,13 @@ struct ProbeSummary {
         if snapshot.network.interfaceName != nil { netOK += 1 }
         if snapshot.gpu.utilization != nil { gpuOK += 1 }
         if snapshot.disk != nil { diskOK += 1 }
+        if snapshot.thermal.sourceDescription != nil { thermalOK += 1 }
+        if !snapshot.thermal.fans.isEmpty { fanOK += 1 }
+        maxThermalReadMs = max(maxThermalReadMs, snapshot.thermal.readMillis)
     }
 
     /// CPU / 内存 / 网络是核心传感器：任何一个整轮都没成功 → 退出码 2。
-    /// GPU / 磁盘失败只算警告，仍返回 0。
+    /// GPU / 磁盘 / 温度失败只算警告，仍返回 0。
     var exitCode: Int32 {
         guard samples > 0 else { return 2 }
         if cpuOK == 0 || memOK == 0 || netOK == 0 { return 2 }
@@ -43,10 +51,12 @@ struct ProbeSummary {
             "\(ok > 0 ? "ok" : "FAIL")(\(ok)/\(samples))"
         }
         return String(format: "[summary] samples=%d avgSampleMs=%.3f maxSampleMs=%.3f "
-                      + "cpu=%@ mem=%@ net=%@ gpu=%@ disk=%@ duration=%.2fs",
+                      + "cpu=%@ mem=%@ net=%@ gpu=%@ disk=%@ duration=%.2fs "
+                      + "thermal=%@ fan=%@ maxThermalReadMs=%.3f",
                       samples, avg, maxMs,
                       status(cpuOK), status(memOK), status(netOK), status(gpuOK), status(diskOK),
-                      duration)
+                      duration,
+                      status(thermalOK), status(fanOK), maxThermalReadMs)
     }
 }
 
@@ -97,6 +107,14 @@ enum ProbeRunner {
         }
         if summary.diskOK == 0 {
             reporter.emitError("[warn] 磁盘占用取不到（disk = nil）：不影响退出码")
+        }
+        if summary.thermalOK == 0 {
+            reporter.emitError("[warn] 温度取不到（thermal = .unavailable）："
+                               + "UI 应显示 n/a，不影响退出码")
+        }
+        if summary.fanOK == 0 {
+            reporter.emitError("[warn] 风扇转速取不到（fans 为空）："
+                               + "可能是无风扇机型，不影响退出码")
         }
         if capped {
             reporter.emitError("[warn] 达到采样上限 \(maxSamples) 拍，提前结束")

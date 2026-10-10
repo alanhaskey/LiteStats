@@ -1,4 +1,5 @@
 import AppKit
+import LiteStatsCore
 import SwiftUI
 
 /// SwiftUI 侧观察的呈现状态（窗口 frame 由 AppKit 控制，这里只管绘制与动画）。
@@ -34,6 +35,10 @@ final class NotchPanelController {
     private let panel: NotchPanel
     private let hosting: NSHostingView<PanelRootView>
     private let container = PanelContainerView(frame: .zero)
+    /// 收起态常驻指示条（纯 AppKit 绘制，不拉起 SwiftUI 渲染管线）
+    private let indicatorView = NotchIndicatorView(frame: .zero)
+    private var leftMetric: IndicatorMetric = .none
+    private var rightMetric: IndicatorMetric = .none
 
     private var pollTimer: Timer?
     private var pendingExpand: DispatchWorkItem?
@@ -65,6 +70,11 @@ final class NotchPanelController {
         // 不让 hosting view 按内容固有尺寸反向撑大自己
         hosting.sizingOptions = []
         container.addSubview(hosting)
+
+        indicatorView.frame = container.bounds
+        indicatorView.autoresizingMask = [.width, .height]
+        container.addSubview(indicatorView) // 在 SwiftUI 之上
+
         panel.contentView = container
 
         installClickMonitor()
@@ -182,7 +192,12 @@ final class NotchPanelController {
             } else {
                 presentation.isExpanded = true
             }
+            // 指示条要等面板动画长出来之后再隐藏，否则黑耳会先消失、留一小段空白
+            hideIndicator(after: animated ? expandAnimation : 0)
+
         case .collapsed:
+            // 收起时立刻把指示条放出来：面板淡出的这段时间由它填住黑耳区域
+            showIndicator()
             if animated {
                 withAnimation(.easeIn(duration: collapseAnimation)) {
                     presentation.isExpanded = false
@@ -193,6 +208,7 @@ final class NotchPanelController {
                         self.panel.setFrame(self.layout.collapsedFrame, display: true)
                         self.container.frame = CGRect(origin: .zero, size: self.layout.collapsedFrame.size)
                         self.hosting.frame = self.container.bounds
+                        self.indicatorView.frame = self.container.bounds
                     }
                 }
             } else {
@@ -200,6 +216,26 @@ final class NotchPanelController {
                 panel.setFrame(layout.collapsedFrame, display: true)
                 container.frame = CGRect(origin: .zero, size: layout.collapsedFrame.size)
                 hosting.frame = container.bounds
+                indicatorView.frame = container.bounds
+            }
+        }
+    }
+
+    private func showIndicator() {
+        indicatorView.isHidden = false
+        indicatorView.needsDisplay = true
+    }
+
+    private func hideIndicator(after delay: TimeInterval) {
+        guard delay > 0 else {
+            indicatorView.isHidden = true
+            return
+        }
+        let generation = transitionGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.transitionGeneration == generation, self.state == .expanded else { return }
+                self.indicatorView.isHidden = true
             }
         }
     }
@@ -264,18 +300,44 @@ final class NotchPanelController {
         guard let geometry = ScreenGeometry.resolve(previous: layout.geometry) else { return }
         var newLayout = layout
         newLayout.geometry = geometry
+        applyLayout(newLayout)
+    }
+
+    /// 应用新布局（设置界面改动、屏幕变化都走这里）：重算窗口 frame + 重配指示条。
+    func applyLayout(_ newLayout: PanelLayout) {
         layout = newLayout
         presentation.layout = newLayout
+        indicatorView.configure(layout: newLayout, leftMetric: leftMetric, rightMetric: rightMetric)
+
         switch state {
         case .collapsed:
             panel.setFrame(newLayout.collapsedFrame, display: true)
             container.frame = CGRect(origin: .zero, size: newLayout.collapsedFrame.size)
+            indicatorView.isHidden = false
         case .expanded:
             panel.setFrame(newLayout.expandedFrame, display: true)
             container.frame = CGRect(origin: .zero, size: newLayout.expandedFrame.size)
+            indicatorView.isHidden = true
         }
         hosting.frame = container.bounds
+        indicatorView.frame = container.bounds
     }
+
+    /// 设置界面改动指示条内容时调用
+    func applyIndicators(left: IndicatorMetric, right: IndicatorMetric) {
+        leftMetric = left
+        rightMetric = right
+        indicatorView.configure(layout: layout, leftMetric: left, rightMetric: right)
+        indicatorView.isHidden = (state == .expanded)
+        Trace.log("indicators left=\(left.rawValue) right=\(right.rawValue) collapsed=\(NSStringFromRect(layout.collapsedFrame))")
+    }
+
+    /// 每拍把数据推给指示条（纯 AppKit 重绘，1 Hz）
+    func updateIndicator(_ snapshot: SystemSnapshot?) {
+        indicatorView.update(snapshot: snapshot)
+    }
+
+    var indicatorIsActive: Bool { indicatorView.isActive }
 
     /// 供 `--selftest` 使用：不依赖鼠标即可驱动状态机
     func forceState(_ newState: State, animated: Bool) {
@@ -285,6 +347,8 @@ final class NotchPanelController {
     var windowFrame: CGRect { panel.frame }
     var windowLevel: Int { panel.level.rawValue }
     var isWindowVisible: Bool { panel.isVisible }
+    /// 供自检断言指示条是否显示
+    var indicatorIsHidden: Bool { indicatorView.isHidden }
 
     /// 把面板内容离屏渲染成位图。用于 `--selftest` 做真实绘制验证
     /// （不需要屏幕录制权限，因为是进程内把视图层级画进位图）。

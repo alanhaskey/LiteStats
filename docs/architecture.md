@@ -147,14 +147,18 @@ public final class SystemMonitor: @unchecked Sendable {
 
 | # | 标准 | 结果 |
 | --- | --- | --- |
-| 1 | `swift build` / `swift test` 通过 | ✅ 44 tests in 6 suites passed（`scripts/test.sh`） |
-| 2 | 探针输出真实值（15 核 / 24 GiB / GPU 非 nil / 网速随流量变化） | ✅ `cores=15 gpu 62% mem 15.4G/24.0G net en0` |
-| 3 | 常驻 CPU < 1 %、内存 < 60 MB | ✅ 收起态 **0.09 % / 10.1 MB 物理占用**（RSS 51.6 MB） |
-| 4 | 窗口几何与刘海对齐、展开包含收起 | ✅ `--selftest` 35/35 通过 |
+| 1 | `swift build` / `swift test` 通过 | ✅ 64 tests in 8 suites passed（`scripts/test.sh`） |
+| 2 | 探针输出真实值 | ✅ `cores=15 gpu 62-73% mem 15.4G/24.0G net en0 disk 42.1% cpuTemp 63°C fans 4092/4425rpm` |
+| 3 | 常驻 CPU < 1 %、内存 < 60 MB | ✅ 收起态 **0.08 % / 14.2 MB 物理占用**（RSS 53.5 MB） |
+| 4 | 窗口几何与刘海对齐、展开包含收起 | ✅ `--selftest` 52/52 通过 |
 | 5 | 悬浮展开 / 移开收起 / 不遮菜单栏 | ✅ 端到端光标测试 PASS；收起态离屏位图最大 alpha = 0 |
+| 6 | 常驻指示条可配、可关、不破坏常驻开销 | ✅ 自检含指示条几何/绘制断言；指示条改用纯 AppKit 手绘 |
+| 7 | 设置界面可开、可渲染、可持久化 | ✅ 自检对设置窗口做离屏渲染断言（覆盖率 99.8 %） |
+| 8 | 温度/风扇可读且不拖垮开销 | ✅ 三级节流后单次读取 ≤ 8 ms；无人查看时降到 30 拍一次 |
 
-补充实测（5 段 45s `--benchmark`）：展开态 1.01 % / 17.5 MB；完全空闲地板 0.14 %。
-无泄漏：20000 拍压测增长 0.05 MB（分配器噪声，非线性）。
+补充实测（6 段 60s `--benchmark`，两次运行取一致值）：收起态 0.07–0.08 %、展开态 0.80–1.02 %、
+展开静态重绘地板 0.33 %、完全空闲 0.12–0.18 %。
+无泄漏（`scripts/soak.sh` 单进程 20000 拍）：全部传感器 0.8 B/拍。
 
 ## 7. 后期修正（与初版设计的差异）
 
@@ -165,5 +169,31 @@ public final class SystemMonitor: @unchecked Sendable {
 3. **CPU 计量改用 `getrusage`**：`task_info(MACH_TASK_BASIC_INFO)` 的 user_time/system_time
    在本机会长时间不更新，导致"采样 8 次却报告 0 ms"的假数据。
 4. **`setEventHandler` 闭包必须标 `@Sendable`**：否则继承 `@MainActor` 隔离，运行时刷 data race 警告。
-5. **非 240 字节/拍的"泄漏"是误判**：`/usr/bin/time -l` 报的是峰值 RSS，
-   不同时长对比会得出假结论；正确的做法是同进程内前后差值 + 加大拍数看是否线性。
+5. **"240 字节/拍的泄漏"是误判**：`/usr/bin/time -l` 报的是峰值 RSS，
+   不同时长对比会得出假结论；正确的做法是同进程内前后差值 + 加大拍数看是否线性
+   （已固化为 `scripts/soak.sh`）。
+6. **面板里不能用 `Image(systemName:)`**：SF Symbol 在每秒重绘时会被反复渲染，
+   展开态 CPU 明显上升；改用文字标签 + `Canvas` 绘制。
+7. **每核心占用条改为单个 `Canvas`**：15 组 VStack/Shape/Text（≈45 个视图）→ 1 个 Canvas，
+   展开态更新重绘成本显著下降。
+
+## 8. 刘海常驻指示条与设置界面
+
+- **指示条**：刘海左右各可选一个指标（CPU／内存／GPU／网络／磁盘／温度／风扇）。
+  做法是 `NotchIndicatorView`（**纯 AppKit 手绘**，不引入 SwiftUI）——因为 SwiftUI 只要渲染就会
+  拉起整条渲染管线，常驻物理占用会从 14 MB 涨到 100 MB。黑耳宽度 = 指标宽度 + 10pt 留白，
+  外侧下角圆角 10pt、内侧贴齐物理刘海。
+- **布局不变式**（指示条左右宽度可能不等时尤其重要）：收起 frame 不再以刘海为对称中心，
+  因此展开 frame 必须取「居中面板矩形 ∪ 收起 frame」的并集，面板体仍以刘海居中。
+  自检里有对应断言（`展开 frame 仍完整包含收起 frame`、`面板体以刘海为水平居中`）。
+- **设置界面**：SwiftUI `Form` + 实时刘海示意图；窗口关闭即释放 controller（连带释放 SwiftUI 图）。
+  自检通过离屏渲染断言它真的画出了内容（无法用鼠标点的环境下这是唯一可行的验证）。
+- **开机自启**：优先 `SMAppService.mainApp`（系统登录项可见可管理），失败退回 `~/Library/LaunchAgents` plist。
+
+## 9. 温度/风扇的性能设计（Apple Silicon）
+
+每次 `IOHIDServiceClientCopyEvent` 是一次 ~0.75 ms 的同步 IPC，全量读 76 个服务 = 78 ms/拍。
+三级应对：轮转切片（每拍 8 个，≈7 ms，按同名实例交错排序）→ 隔拍刷新（默认 5 拍）→
+自适应降频（无人查看时 30 拍，`MonitorService.thermalIsVisible`）。
+另外 HID 的 76 个服务只有 17 个唯一名字，对外按名字去重保留最大值（否则 `ThermalSensor.id == name`
+会出现重复 id，SwiftUI `ForEach` 会异常）。

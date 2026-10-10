@@ -52,10 +52,10 @@ enum SelfBenchmark {
 
     static func run(totalSeconds: Double, service: MonitorService, controller: NotchPanelController) {
         controller.hoverEnabled = false // 保证各段状态可控、结果可复现
-        print("[bench] LiteStats 自身开销测量，共 \(Int(totalSeconds))s（5 段）")
+        print("[bench] LiteStats 自身开销测量，共 \(Int(totalSeconds))s（6 段）")
         print("[bench] 采样间隔：收起 \(service.intervalCollapsed)s / 展开 \(service.intervalExpanded)s")
         BenchmarkRunner(service: service, controller: controller,
-                        phaseSeconds: max(3, totalSeconds / 5)).start()
+                        phaseSeconds: max(3, totalSeconds / 6)).start()
     }
 }
 
@@ -71,6 +71,7 @@ private final class BenchmarkRunner {
         ("③ 展开态（面板渲染中，采样 1s）", {}),
         ("④ 再收起（看内存是否回落）", {}),
         ("⑤ 展开但停止采样（区分“持续重绘”与“每次更新重绘”）", {}),
+        ("⑥ 展开 + 温度高频刷新（有人看温度/风扇）", {}),
     ]
 
     private var index = 0
@@ -117,6 +118,11 @@ private final class BenchmarkRunner {
             controller.forceState(.expanded, animated: false)
             service.isPanelExpanded = true
             service.stop()
+        case 5:
+            // ⑥ 恢复采样，并把温度/风扇切到高频（模拟用户正盯着温度看的场景）
+            service.thermalIsVisible = true
+            service.isPanelExpanded = true
+            service.start()
         default:
             break
         }
