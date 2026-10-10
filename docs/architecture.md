@@ -202,3 +202,29 @@ public final class SystemMonitor: @unchecked Sendable {
 自适应降频（无人查看时 30 拍，`MonitorService.thermalIsVisible`）。
 另外 HID 的 76 个服务只有 17 个唯一名字，对外按名字去重保留最大值（否则 `ThermalSensor.id == name`
 会出现重复 id，SwiftUI `ForEach` 会异常）。
+
+## 10. 历史统计（本地记录）
+
+三层数据 + 三份文件，全部定长记录、追加为主：
+
+| 层 | 文件 | 保留 |
+| --- | --- | --- |
+| 分钟明细 | `minutes.bin` | 7 天 |
+| 小时聚合 | `hours.bin` / `app-hours.bin` | 180 天 |
+| 天聚合 | `days.bin` / `app-days.bin` | 永久 |
+| 应用名表 | `app-names.bin` | 只追加 |
+
+按应用归属的两条数据来源（都实测过）：
+
+- **CPU / 内存**：`proc_listallpids` + `proc_pid_rusage(RUSAGE_INFO_CURRENT)`，196 个进程 **0.49 ms**；
+  `ri_user_time`/`ri_system_time` 是纳秒，`ri_phys_footprint` 是字节；用 `proc_name` 取名字。
+- **网络**：调用 `/usr/bin/nettop -P -x -l 1 -J bytes_in,bytes_out -n`（**单次 10 ms**），
+  它给的是**进程启动以来的累计值** → 按 `(pid, 名字)` 缓存上次值做差分；PID 会复用，
+  名字变了必须重置基线（所以启动后的第一拍只建立基线、没有应用流量数据）。
+
+写入路径全部是"内存聚合 + 后台队列落盘"：`record(snapshot:)` 实测 **0.0008 ms**，
+`record(appSamples:)` 0.006 ms，采集器 2.38 ms/5s。开启后常驻开销 0.07% → **约 0.15% CPU / 16 MB**。
+
+> 踩坑：压缩/清理会为所有文件调度 `rewriteAll`，而名字表的 `rewritePayloadLocked` 返回空 Data
+> （它设计上只追加）→ 第一次清理就把名字表清空，重启后应用 `path` 全丢。
+> 现在 `.appNames` 跳过整体重写，并有单元测试守住。
