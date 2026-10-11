@@ -3,7 +3,7 @@
 <img src="docs/images/icon.png" width="110" align="right" alt="LiteStats icon" />
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-black)
-![Version](https://img.shields.io/badge/version-1.1.0-blue)
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **A lightweight system monitor that lives in the MacBook notch.**
@@ -37,7 +37,7 @@ macOS 14 or later, Apple Silicon.
 
 ## Install
 
-1. Download `LiteStats-1.1.0.dmg` from [Releases](https://github.com/alanhaskey/LiteStats/releases)
+1. Download `LiteStats-1.2.0.dmg` from [Releases](https://github.com/alanhaskey/LiteStats/releases)
 2. Open it and drag **LiteStats** into *Applications*
 3. Launch it — the app runs in the background with no Dock icon
 

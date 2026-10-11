@@ -28,16 +28,15 @@ public final class HistoryStore: @unchecked Sendable {
     // MARK: - 保留策略
 
     /// 分钟级明细保留 7 天。
-    public static let minuteRetentionDays = 7
+    /// 分钟明细已停写（界面从不读取，纯浪费）：保留 0 天
     /// 小时级汇总保留 180 天。
     public static let hourRetentionDays = 180
     /// 按应用的小时明细保留 7 天（和分钟级同一档：够回答"今天哪个时段是谁在跑"）。
     public static let appHourRetentionDays = 7
     /// 按应用的天级汇总保留 180 天（够回答"这个月谁用了多少流量"）。
-    public static let appDayRetentionDays = 180
+    public static let appDayRetentionDays = 40
     /// 天级汇总永久保留（一年 365 行 × 64 字节 ≈ 23 KB，没必要清）。
 
-    private static let minuteRetention: TimeInterval = Double(minuteRetentionDays) * 86400
     private static let hourRetention: TimeInterval = Double(hourRetentionDays) * 86400
     private static let appHourRetention: TimeInterval = Double(appHourRetentionDays) * 86400
     private static let appDayRetention: TimeInterval = Double(appDayRetentionDays) * 86400
@@ -48,8 +47,11 @@ public final class HistoryStore: @unchecked Sendable {
 
     /// 低于这个"影响"的应用条目不值得留档：既没有展示价值，又会在 180 天里累积成 MB 级文件。
     /// 0.02 CPU 秒 ≈ 一个真在干活的后台进程一小时里最少的量级；128MB 常驻内存则值得单独留一行。
-    private static let appKeepCPUSeconds = 0.02
-    private static let appKeepMemoryBytes: UInt64 = 128 * 1024 * 1024
+    private static let appKeepCPUSeconds = 0.1
+    private static let appKeepMemoryBytes: UInt64 = 300 * 1024 * 1024
+    /// 网络也必须有实际量级才算"有活动"：早期用"字节数 > 0"，
+    /// 结果每个联网后台进程每小时都留一行（实测 50 个/小时 → app-hours 每天 150KB）。
+    private static let appKeepNetworkBytes: UInt64 = 64 * 1024
 
     // MARK: - 状态
 
@@ -59,7 +61,6 @@ public final class HistoryStore: @unchecked Sendable {
     /// 所有磁盘写入都在这条串行队列上，保证追加 / 重写的顺序，并且永远不阻塞调用方。
     private let ioQueue = DispatchQueue(label: "com.litestats.history.io", qos: .utility)
 
-    private var minuteRecords: [MinuteRecord] = []
     private var hourRecords: [BucketRecord] = []
     private var dayRecords: [BucketRecord] = []
     /// 小时桶：hourEpoch → 应用名 → 记录。用字典是为了"重复 start 合并"不需要线性查找。
@@ -73,7 +74,6 @@ public final class HistoryStore: @unchecked Sendable {
     private var pendingOps: [PendingOp] = []
 
     // 实时累加器（尚未封口的部分）
-    private var liveMinute: LiveAccumulator?
     private var liveHour: LiveAccumulator?
     private var liveDay: LiveAccumulator?
     private var liveAppHour: LiveAppBucket?
@@ -98,9 +98,18 @@ public final class HistoryStore: @unchecked Sendable {
         var coveredSeconds: Double = 0
         var sampleCount: Int32 = 0
         var temperatureMax: Double?
+        /// 第一拍 / 最近一拍的**真实时间**。未封口桶的 `start` 是整点/整天，
+        /// 不能拿它当覆盖范围（否则"刚采了 30 秒"会落在查询窗口之外）。
+        var firstSampleAt: Date?
+        var lastSampleAt: Date?
 
         mutating func add(cpuSeconds: Double, gpuSeconds: Double, memoryByteSeconds: Double,
-                          networkIn: UInt64, networkOut: UInt64, dt: Double, temperature: Double?) {
+                          networkIn: UInt64, networkOut: UInt64, dt: Double, temperature: Double?,
+                          at timestamp: Date? = nil) {
+            if let timestamp {
+                if firstSampleAt == nil { firstSampleAt = timestamp }
+                lastSampleAt = timestamp
+            }
             self.cpuSeconds += cpuSeconds
             self.gpuSeconds += gpuSeconds
             self.memoryByteSeconds += memoryByteSeconds
@@ -136,6 +145,7 @@ public final class HistoryStore: @unchecked Sendable {
         case appDays = "app-days.bin"
         case appNames = "app-names.bin"
 
+        /// `.minutes` 仍在列表里只是为了**识别并删除**旧格式的分钟文件（已停写）
         static let all: [FileKind] = [.minutes, .hours, .days, .appHours, .appDays, .appNames]
 
         func url(in directory: URL) -> URL {
@@ -196,6 +206,9 @@ public final class HistoryStore: @unchecked Sendable {
         self.directory = base.appendingPathComponent("History", isDirectory: true)
         self.calendar = Calendar.current
         try FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
+        // 分钟明细已停写：把旧版本留下的 minutes.bin 直接删掉（界面不读它，留着纯占空间）
+        try? FileManager.default.removeItem(at: FileKind.minutes.url(in: self.directory))
+        try? FileManager.default.removeItem(at: FileKind.appNames.url(in: self.directory))
         try loadFromDisk()
         lock.lock()
         // 启动时清一次过期数据（程序可能几天没开，期间的数据早该滚落了）。
@@ -229,8 +242,6 @@ public final class HistoryStore: @unchecked Sendable {
             }
         }
 
-        let loadedMinutes = read(.minutes, magic: MinuteRecord.magic,
-                                 recordSize: MinuteRecord.byteCount) { MinuteRecord(raw: $0, offset: $1) }
         let loadedHours = read(.hours, magic: BucketRecord.hourMagic,
                                recordSize: BucketRecord.byteCount) { BucketRecord(raw: $0, offset: $1) }
         let loadedDays = read(.days, magic: BucketRecord.dayMagic,
@@ -244,9 +255,8 @@ public final class HistoryStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        // 加载时同样做"同 start 合并"：flush() 可能把同一分钟封口过两次（见 mergeMinuteLocked 注释）。
-        minuteRecords.removeAll()
-        for record in loadedMinutes { mergeMinuteLocked(record, schedule: false) }
+        // 加载时同样做"同 start 合并"：flush() 与小时边界都会把同一个桶封口，
+        // 所以磁盘上可能出现两条 start 相同的记录，必须相加而不是覆盖。
         hourRecords.removeAll()
         for record in loadedHours { mergeBucketLocked(record, into: &hourRecords) }
         dayRecords.removeAll()
@@ -270,12 +280,8 @@ public final class HistoryStore: @unchecked Sendable {
 
         lock.lock()
 
-        let minuteStart = bucketStart(timestamp, component: .minute)
         let hourStart = bucketStart(timestamp, component: .hour)
         let dayStart = bucketStart(timestamp, component: .day)
-
-        if let current = liveMinute, current.start != minuteStart { sealMinuteLocked() }
-        if liveMinute == nil { liveMinute = LiveAccumulator(start: minuteStart) }
 
         if let current = liveHour, current.start != hourStart { sealHourLocked() }
         if liveHour == nil { liveHour = LiveAccumulator(start: hourStart) }
@@ -299,18 +305,14 @@ public final class HistoryStore: @unchecked Sendable {
         let networkOut = Self.byteDelta(rate: snapshot.network.upload, interval: dt)
         let temperature = snapshot.thermal.cpuTemperature
 
-        liveMinute?.add(cpuSeconds: cpuSeconds, gpuSeconds: gpuSeconds,
-                        memoryByteSeconds: memoryByteSeconds,
-                        networkIn: networkIn, networkOut: networkOut,
-                        dt: dt, temperature: temperature)
         liveHour?.add(cpuSeconds: cpuSeconds, gpuSeconds: gpuSeconds,
                       memoryByteSeconds: memoryByteSeconds,
                       networkIn: networkIn, networkOut: networkOut,
-                      dt: dt, temperature: temperature)
+                      dt: dt, temperature: temperature, at: timestamp)
         liveDay?.add(cpuSeconds: cpuSeconds, gpuSeconds: gpuSeconds,
                      memoryByteSeconds: memoryByteSeconds,
                      networkIn: networkIn, networkOut: networkOut,
-                     dt: dt, temperature: temperature)
+                     dt: dt, temperature: temperature, at: timestamp)
 
         lock.unlock()
     }
@@ -341,10 +343,9 @@ public final class HistoryStore: @unchecked Sendable {
         for sample in appSamples {
             let name = sample.name
             guard !name.isEmpty else { continue }
-            if let path = sample.path, !path.isEmpty, appPaths[name] != path {
-                appPaths[name] = path
-                nameUpdates.append(AppNameTable.encode(name: name, path: path))
-            }
+            // ⚠️ 不再记录 name→path：界面只显示应用名，而每个进程的完整路径
+            // （/Applications/Xxx.app/Contents/MacOS/Xxx ≈ 45 字节）会无上限累积
+            // （实测 19 小时就 68KB，且只追加不清理）。app-names.bin 改为启动时删除。
             var entry = liveAppHour?.apps[name] ?? LiveApp()
             let cpuSeconds = sample.cpuSeconds.isFinite ? max(0, sample.cpuSeconds) : 0
             entry.cpuSeconds += cpuSeconds
@@ -364,22 +365,6 @@ public final class HistoryStore: @unchecked Sendable {
     }
 
     // MARK: - 封口（锁内）
-
-    private func sealMinuteLocked() {
-        guard let accumulator = liveMinute else { return }
-        var record = MinuteRecord()
-        record.start = Int64(accumulator.start.timeIntervalSince1970)
-        record.cpuSeconds = accumulator.cpuSeconds
-        record.gpuSeconds = accumulator.gpuSeconds
-        record.memoryByteSeconds = accumulator.memoryByteSeconds
-        record.networkIn = accumulator.networkIn
-        record.networkOut = accumulator.networkOut
-        record.coveredSeconds = accumulator.coveredSeconds
-        record.temperatureMax = accumulator.temperatureMax ?? .nan
-        record.sampleCount = accumulator.sampleCount
-        liveMinute = nil
-        mergeMinuteLocked(record, schedule: true)
-    }
 
     private func sealHourLocked() {
         guard let accumulator = liveHour else { return }
@@ -448,25 +433,8 @@ public final class HistoryStore: @unchecked Sendable {
     /// 是否值得给这个应用留一行历史。
     private static func shouldKeepApp(_ usage: LiveApp) -> Bool {
         usage.cpuSeconds >= appKeepCPUSeconds
-            || usage.networkIn > 0
-            || usage.networkOut > 0
+            || usage.networkIn + usage.networkOut >= appKeepNetworkBytes
             || usage.peakMemoryBytes >= appKeepMemoryBytes
-    }
-
-    /// 追加一条分钟记录。**同一个 start 必须合并**：
-    /// `flush()` 会把当前这一分钟提前封口（保证退出前不丢数据），之后如果进程继续跑，
-    /// 新的一拍又会用同一个 start 建累加器，于是磁盘上会出现两条 start 相同的记录。
-    /// 内存里合并、加载时也合并，落盘时允许重复 —— 这样 flush 可以随便调。
-    private func mergeMinuteLocked(_ record: MinuteRecord, schedule: Bool) {
-        if var last = minuteRecords.last, last.start == record.start {
-            last.merge(record)
-            minuteRecords[minuteRecords.count - 1] = last
-        } else {
-            minuteRecords.append(record)
-        }
-        if schedule {
-            scheduleLocked(.minutes, .append(HistoryFileCodec.encodeRecords([record]) { $0.encoded() }))
-        }
     }
 
     private func mergeBucketLocked(_ record: BucketRecord, into storage: inout [BucketRecord]) {
@@ -499,11 +467,6 @@ public final class HistoryStore: @unchecked Sendable {
         let nowEpoch = now.timeIntervalSince1970
         var dirty: Set<FileKind> = []
 
-        let minuteCutoff = nowEpoch - Self.minuteRetention
-        if let first = minuteRecords.first, Double(first.start) < minuteCutoff {
-            minuteRecords.removeAll { Double($0.start) < minuteCutoff }
-            dirty.insert(.minutes)
-        }
         let hourCutoff = nowEpoch - Self.hourRetention
         if let first = hourRecords.first, Double(first.start) < hourCutoff {
             hourRecords.removeAll { Double($0.start) < hourCutoff }
@@ -558,44 +521,9 @@ public final class HistoryStore: @unchecked Sendable {
     }
 
     /// 分钟级明细（额外接口，不在冻结清单里，纯增量）。
-    /// 给 UI 画"今天哪一分钟最忙"的曲线用，也是单测里验证聚合语义的观察口。
-    public func minuteSamples(from: Date, to: Date) -> [MinuteSample] {
-        lock.lock()
-        defer { lock.unlock() }
-        let fromEpoch = from.timeIntervalSince1970
-        let toEpoch = to.timeIntervalSince1970
-        guard toEpoch > fromEpoch else { return [] }
-        var result: [MinuteSample] = []
-        for record in minuteRecords {
-            let (overlaps, weight) = Self.overlap(start: Double(record.start), duration: 60,
-                                                  from: fromEpoch, to: toEpoch)
-            guard overlaps else { continue }
-            result.append(MinuteSample(
-                date: Date(timeIntervalSince1970: Double(record.start)),
-                cpuSeconds: record.cpuSeconds * weight,
-                gpuPercentAverage: record.coveredSeconds > 0
-                    ? min(max(record.gpuSeconds / record.coveredSeconds, 0), 1) : 0,
-                memoryBytesAverage: record.coveredSeconds > 0
-                    ? record.memoryByteSeconds / record.coveredSeconds : 0,
-                networkIn: Self.scaledBytes(record.networkIn, weight: weight),
-                networkOut: Self.scaledBytes(record.networkOut, weight: weight),
-                temperatureMax: record.temperatureMax.isFinite ? record.temperatureMax : nil))
-        }
-        // 当前还没封口的那一分钟也要返回，否则"刚刚发生的事"在分钟曲线上要等到下一分钟才出现。
-        if let live = liveMinute, liveOverlaps(live, fromEpoch: fromEpoch, toEpoch: toEpoch) {
-            result.append(MinuteSample(
-                date: live.start,
-                cpuSeconds: live.cpuSeconds,
-                gpuPercentAverage: live.coveredSeconds > 0
-                    ? min(max(live.gpuSeconds / live.coveredSeconds, 0), 1) : 0,
-                memoryBytesAverage: live.coveredSeconds > 0
-                    ? live.memoryByteSeconds / live.coveredSeconds : 0,
-                networkIn: live.networkIn,
-                networkOut: live.networkOut,
-                temperatureMax: live.temperatureMax))
-        }
-        return result
-    }
+    /// ⚠️ 分钟明细已停写（见 `record(snapshot:)` 的说明）：界面从不读它，
+    /// 每分钟 72 字节纯属浪费。API 保留是为了契约稳定，恒返回空数组。
+    public func minuteSamples(from: Date, to: Date) -> [MinuteSample] { [] }
 
     // MARK: - 汇总实现（锁内）
 
@@ -617,25 +545,9 @@ public final class HistoryStore: @unchecked Sendable {
                 coveredSeconds: record.covered, sampleCount: record.samples, weight: weight)
         }
 
-        // 1) 分钟级明细（最近 7 天）。存的是积分，按重叠比例缩放不会破坏平均值。
-        for record in minuteRecords {
-            let (overlaps, weight) = Self.overlap(start: Double(record.start), duration: 60,
-                                                  from: fromEpoch, to: toEpoch)
-            guard overlaps else { continue }
-            let values = (cpu: record.cpuSeconds, gpu: record.gpuSeconds,
-                          memBytes: record.memoryByteSeconds,
-                          netIn: record.networkIn, netOut: record.networkOut,
-                          covered: record.coveredSeconds, samples: Int(record.sampleCount))
-            totals.add(cpuSeconds: values.cpu, gpuSeconds: values.gpu,
-                       memoryByteSeconds: values.memBytes,
-                       networkIn: values.netIn, networkOut: values.netOut,
-                       coveredSeconds: values.covered, sampleCount: values.samples, weight: weight)
-            addToHour(hourKey(forEpoch: Double(record.start)), values, weight: weight)
-        }
-
-        // 2) 未封口的当前分钟：它只覆盖了 [start, start+covered)，不能再按整分钟打折，
-        //    否则会把"刚记了 5 秒"的那一分钟算成 1/12。
-        if let live = liveMinute, liveOverlaps(live, fromEpoch: fromEpoch, toEpoch: toEpoch) {
+        // 1) 未封口的当前小时：它只覆盖了 [start, start+covered) 这一小段，
+        //    不能再按整小时打折（否则"刚记了 30 秒"会被算成 1/120）。
+        if let live = liveHour, liveOverlaps(live, fromEpoch: fromEpoch, toEpoch: toEpoch) {
             let values = (cpu: live.cpuSeconds, gpu: live.gpuSeconds,
                           memBytes: live.memoryByteSeconds,
                           netIn: live.networkIn, netOut: live.networkOut,
@@ -647,18 +559,18 @@ public final class HistoryStore: @unchecked Sendable {
             addToHour(hourKey(forEpoch: live.start.timeIntervalSince1970), values, weight: 1)
         }
 
-        // 3) 小时级：只取"分钟明细完全覆盖不到"的那一段。
-        //    判据是 `hourEnd <= minuteCoverStart`，而不是"小时起点在分钟窗口之后"：
-        //    跨在边界上的那一小时会被分钟和小时各算一遍（实测就是 2 倍），
-        //    宁可把边界那一小时让给更精确的分钟明细。
-        let minuteCoverEnd = minuteRecords.first.map { Double($0.start) }
+        // 2) 已封口的小时桶（除了上面那个未封口的当前小时，其余全部来自这里）。
+        //
+        // ⚠️ 小时桶**整桶计入，不再按重叠比例折算**：折算的前提是"更细的分钟明细会补上边界"，
+        // 而分钟明细已停写 —— 再折算就会把"只在 11:00:00 采过两拍"的那个小时按 50% 计，
+        // 反而失真。代价是跨天窗口的开头最多差 1 小时（"今天"视图的窗口边界在整点，不受影响）。
         for record in hourRecords {
             let start = hourStart(ofEpoch: Double(record.start))
             let end = start + hourDuration(ofEpoch: Double(record.start))
-            if let minuteCoverEnd, end > minuteCoverEnd { continue }
-            let (overlaps, weight) = Self.overlap(start: start, duration: end - start,
-                                                  from: fromEpoch, to: toEpoch)
+            let (overlaps, _) = Self.overlap(start: start, duration: end - start,
+                                             from: fromEpoch, to: toEpoch)
             guard overlaps else { continue }
+            let weight: Double = 1
             let values = (cpu: record.cpuSeconds, gpu: record.gpuSeconds,
                           memBytes: record.memoryByteSeconds,
                           netIn: record.networkIn, netOut: record.networkOut,
@@ -733,7 +645,7 @@ public final class HistoryStore: @unchecked Sendable {
         }
 
         let apps = appTotals.map { name, value -> AppUsage in
-            AppUsage(name: name, path: appPaths[name], cpuSeconds: value.cpu,
+            AppUsage(name: name, path: nil, cpuSeconds: value.cpu,
                      peakMemoryBytes: value.peakMemory,
                      networkIn: value.netIn, networkOut: value.netOut,
                      sampleCount: value.samples)
@@ -764,9 +676,12 @@ public final class HistoryStore: @unchecked Sendable {
 
     /// 未封口累加器是否落在查询区间内。它只覆盖 [start, start+covered)，所以"整条算进去"即可。
     private func liveOverlaps(_ accumulator: LiveAccumulator, fromEpoch: Double, toEpoch: Double) -> Bool {
-        let start = accumulator.start.timeIntervalSince1970
-        let end = start + max(accumulator.coveredSeconds, 0)
-        return start < toEpoch && end > fromEpoch
+        // 用真实的首/末采样时间判重叠：accumulator.start 是整点/整天，
+        // 直接拿它当范围的话，"9:15 才开始采"的这一小时会被算成 9:00–9:01（错）。
+        let first = (accumulator.firstSampleAt ?? accumulator.start).timeIntervalSince1970
+        let last = (accumulator.lastSampleAt ?? accumulator.start).timeIntervalSince1970
+        let end = max(last + max(accumulator.coveredSeconds, 0), first)
+        return first < toEpoch && end > fromEpoch
     }
 
     private func liveOverlaps(_ bucket: LiveAppBucket, fromEpoch: Double, toEpoch: Double) -> Bool {
@@ -781,13 +696,11 @@ public final class HistoryStore: @unchecked Sendable {
         lock.lock()
         generation &+= 1
         pendingOps.removeAll()
-        minuteRecords.removeAll()
         hourRecords.removeAll()
         dayRecords.removeAll()
         appHourRecords.removeAll()
         appDayRecords.removeAll()
         appPaths.removeAll()
-        liveMinute = nil
         liveHour = nil
         liveDay = nil
         liveAppHour = nil
@@ -812,7 +725,6 @@ public final class HistoryStore: @unchecked Sendable {
     /// （内存与加载都会合并同 start 的记录）。
     public func flush() {
         lock.lock()
-        sealMinuteLocked()
         sealHourLocked()
         sealDayLocked()
         sealAppHourLocked()
@@ -850,7 +762,7 @@ public final class HistoryStore: @unchecked Sendable {
     var debugRecordCounts: (minutes: Int, hours: Int, days: Int, appHours: Int, appDays: Int, names: Int) {
         lock.lock()
         defer { lock.unlock() }
-        return (minuteRecords.count, hourRecords.count, dayRecords.count,
+        return (0, hourRecords.count, dayRecords.count,
                 appHourRecords.values.reduce(0) { $0 + $1.count },
                 appDayRecords.values.reduce(0) { $0 + $1.count },
                 appPaths.count)
@@ -904,8 +816,7 @@ public final class HistoryStore: @unchecked Sendable {
     private func rewritePayloadLocked(_ kind: FileKind) -> Data {
         switch kind {
         case .minutes:
-            return HistoryFileCodec.encode(minuteRecords, magic: MinuteRecord.magic,
-                                           recordSize: MinuteRecord.byteCount) { $0.encoded() }
+            return Data()      // 已停写：整体重写时直接清空
         case .hours:
             return HistoryFileCodec.encode(hourRecords, magic: BucketRecord.hourMagic,
                                            recordSize: BucketRecord.byteCount) { $0.encoded() }

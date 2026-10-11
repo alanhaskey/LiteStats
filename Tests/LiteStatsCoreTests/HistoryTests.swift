@@ -72,13 +72,14 @@ private func minutesAgo(_ minutes: Double, now: Date = Date()) -> Date {
 @Suite("历史：分钟聚合")
 struct HistoryMinuteAggregationTests {
 
-    @Test func sameMinuteAccumulatesIntoSingleSample() throws {
+    @Test func sameHourAccumulatesIntoSingleBucket() throws {
+        // 分钟明细已停写：同一小时的多拍现在直接合并成一个小时桶
         let directory = try makeTemporaryDirectory()
         defer { removeDirectory(directory) }
         let store = try HistoryStore(directory: directory)
 
         let base = localDate(year: 2025, month: 6, day: 10, hour: 13, minute: 20, second: 0)
-        // 同一分钟内 4 拍，每拍 1 秒、CPU 50%、4 核 → 每拍 2 CPU 秒
+        // 同一小时内 4 拍，每拍 1 秒、CPU 50%、4 核 → 每拍 2 CPU 秒
         for offset in 0..<4 {
             store.record(snapshot: makeSnapshot(at: base.addingTimeInterval(Double(offset)),
                                                 cpuTotal: 0.5, coreCount: 4,
@@ -86,43 +87,16 @@ struct HistoryMinuteAggregationTests {
                          interval: 1)
         }
 
-        let samples = store.minuteSamples(from: base.addingTimeInterval(-60),
-                                          to: base.addingTimeInterval(120))
-        #expect(samples.count == 1, "同一分钟的 4 拍必须只产生一条 MinuteSample")
-        let sample = try #require(samples.first)
-        #expect(abs(sample.date.timeIntervalSince(base)) < 1, "分钟桶的起点应该是整分钟")
+        let summary = store.summary(from: base.addingTimeInterval(-60),
+                                    to: base.addingTimeInterval(120))
+        #expect(summary.hourly.count == 1, "同一小时必须只有一个桶")
+        let bucket = try #require(summary.hourly.first)
+        #expect(bucket.hourStart == localDate(year: 2025, month: 6, day: 10, hour: 13))
+        #expect(bucket.sampleCount == 4)
         // 4 拍 × (0.5 × 1s × 4 核) = 8 CPU 秒
-        #expect(abs(sample.cpuSeconds - 8) < 1e-9)
-        #expect(abs(sample.gpuPercentAverage - 0.25) < 1e-9)
-        #expect(abs(sample.memoryBytesAverage - 4_000_000_000) < 1e-6)
-        // 网络：每拍 1000 B/s × 1s = 1000 字节，4 拍 = 4000
-        #expect(sample.networkIn == 4000)
-        #expect(sample.networkOut == 2000)
-        #expect(sample.temperatureMax == 50)
-    }
-
-    @Test func minuteSampleTemperatureMaxPicksHighestAndNilWhenAbsent() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { removeDirectory(directory) }
-        let store = try HistoryStore(directory: directory)
-
-        let base = localDate(year: 2025, month: 6, day: 10, hour: 14, minute: 5, second: 0)
-        store.record(snapshot: makeSnapshot(at: base, cpuTemperature: 41), interval: 1)
-        store.record(snapshot: makeSnapshot(at: base.addingTimeInterval(1), cpuTemperature: 63),
-                     interval: 1)
-        store.record(snapshot: makeSnapshot(at: base.addingTimeInterval(2), cpuTemperature: 52),
-                     interval: 1)
-
-        let samples = store.minuteSamples(from: base.addingTimeInterval(-60), to: base.addingTimeInterval(120))
-        #expect(samples.count == 1)
-        #expect(samples.first?.temperatureMax == 63)
-
-        // 一整分钟都没有温度数据 → nil，而不是 0
-        let later = base.addingTimeInterval(120)
-        store.record(snapshot: makeSnapshot(at: later, cpuTemperature: nil), interval: 1)
-        let all = store.minuteSamples(from: base.addingTimeInterval(-60), to: later.addingTimeInterval(60))
-        #expect(all.count == 2)
-        #expect(all.last?.temperatureMax == nil)
+        #expect(abs(bucket.cpuSeconds - 8) < 1e-9)
+        #expect(abs(summary.cpuSeconds - 8) < 1e-9)
+        #expect(abs(bucket.gpuPercentAverage - 0.25) < 1e-9)
     }
 
     @Test func unknownGPUDegradesToZeroInsteadOfPollutingAverage() throws {
@@ -131,8 +105,8 @@ struct HistoryMinuteAggregationTests {
         let store = try HistoryStore(directory: directory)
         let base = localDate(year: 2025, month: 6, day: 10, hour: 15, minute: 0, second: 0)
         store.record(snapshot: makeSnapshot(at: base, gpuUtilization: nil), interval: 1)
-        let samples = store.minuteSamples(from: base, to: base.addingTimeInterval(60))
-        #expect(samples.first?.gpuPercentAverage == 0)
+        let summary = store.summary(from: base, to: base.addingTimeInterval(60))
+        #expect(summary.hourly.first?.gpuPercentAverage == 0)
     }
 }
 
@@ -151,10 +125,6 @@ struct HistoryBoundaryTests {
         let second = localDate(year: 2025, month: 6, day: 10, hour: 14, minute: 0, second: 30)
         store.record(snapshot: makeSnapshot(at: first), interval: 1)
         store.record(snapshot: makeSnapshot(at: second), interval: 1)
-
-        let samples = store.minuteSamples(from: first.addingTimeInterval(-60),
-                                          to: second.addingTimeInterval(60))
-        #expect(samples.count == 2, "13:59 与 14:00 必须是两条分钟记录")
 
         let summary = store.summary(from: localDate(year: 2025, month: 6, day: 10, hour: 13),
                                     to: localDate(year: 2025, month: 6, day: 10, hour: 15))
@@ -192,7 +162,7 @@ struct HistoryBoundaryTests {
         #expect(yesterday.networkIn == 100)
     }
 
-    @Test func rolloverThroughSixHoursKeepsThreeLayers() throws {
+    @Test func rolloverThroughSixHoursSealsBuckets() throws {
         let directory = try makeTemporaryDirectory()
         defer { removeDirectory(directory) }
         let store = try HistoryStore(directory: directory)
@@ -203,12 +173,7 @@ struct HistoryBoundaryTests {
         store.record(snapshot: makeSnapshot(at: before, download: 60, upload: 0), interval: 1)
         store.record(snapshot: makeSnapshot(at: after, download: 120, upload: 0), interval: 1)
 
-        // 跳变前的分钟 / 小时 / 天都必须已经封口，不能被后来的数据污染。
-        let minuteSamples = store.minuteSamples(from: before.addingTimeInterval(-60),
-                                                to: before.addingTimeInterval(60))
-        #expect(minuteSamples.count == 1)
-        #expect(minuteSamples.first?.networkIn == 60)
-
+        // 跳变前的小时 / 天都必须已经封口，不能被后来的数据污染。
         let firstHour = store.summary(from: localDate(year: 2025, month: 6, day: 11, hour: 10),
                                       to: localDate(year: 2025, month: 6, day: 11, hour: 11))
         #expect(firstHour.networkIn == 60)
@@ -245,10 +210,11 @@ struct HistoryRangeQueryTests {
         defer { removeDirectory(directory) }
 
         let one = store.lastHours(1, now: Self.anchor)
-        // 11:30 → 12:30：只有"当前小时"（12:00 的 2 拍）落在窗口里
-        #expect(one.networkIn == 200)
-        #expect(one.networkOut == 20)
-        #expect(abs(one.trackDuration - 2) < 1e-9)
+        // 11:30 → 12:30：按**整小时粒度**计入（分钟明细已停写，做不了更细的边界折算）：
+        // 11 点整桶（2 拍）+ 当前未封口的 12 点（2 拍）
+        #expect(one.networkIn == 400, "小时粒度：11 点与 12 点各 200")
+        #expect(one.networkOut == 40)
+        #expect(abs(one.trackDuration - 4) < 1e-9)
 
         let three = store.lastHours(3, now: Self.anchor)
         #expect(three.networkIn == 600, "3 小时窗口要覆盖 10/11/12 三个小时")
@@ -320,41 +286,22 @@ struct HistoryRangeQueryTests {
 @Suite("历史：保留策略")
 struct HistoryRetentionTests {
 
-    @Test func minuteDetailOlderThanSevenDaysIsPruned() throws {
+    @Test func staleHourBucketsArePruned() throws {
+        // 分钟明细已停写，改成验证小时桶的保留期（180 天）
         let directory = try makeTemporaryDirectory()
         defer { removeDirectory(directory) }
-        let now = Date()
-        let old = now.addingTimeInterval(-8 * 86400)
-        let recent = Date(timeIntervalSince1970: (now.timeIntervalSince1970 / 60).rounded(.down) * 60)
-
         let store = try HistoryStore(directory: directory)
-        store.record(snapshot: makeSnapshot(at: old, download: 700, upload: 0), interval: 1)
+
+        let old = minutesAgo(60 * 24 * 200)          // 200 天前：超过 180 天保留期
+        store.record(snapshot: makeSnapshot(at: old), interval: 1)
         store.flush()
-        #expect(store.debugRecordCounts.minutes == 1, "8 天前那条先正常写进去了")
+        #expect(store.debugRecordCounts.hours == 1, "先正常写进去")
 
-        // 跨天 → 触发清理：8 天前的分钟明细当场从内存丢掉（并安排磁盘压缩重写）
-        store.record(snapshot: makeSnapshot(at: recent, download: 900, upload: 0), interval: 1)
-        #expect(store.debugRecordCounts.minutes == 0, "跨天清理后 8 天前的分钟明细立即消失")
-        store.flush()
-        #expect(store.debugRecordCounts.minutes == 1)
-
-        #expect(store.minuteSamples(from: old.addingTimeInterval(-600),
-                                    to: old.addingTimeInterval(600)).isEmpty,
-                "清理后 8 天前的分钟明细不能再被返回")
-
-        // 重新打开 = 走一遍磁盘加载 + 启动清理，结果必须一致
-        let reopened = try HistoryStore(directory: directory)
-        reopened.flush()
-        #expect(reopened.debugRecordCounts.minutes == 1, "磁盘上也不该再有 8 天前的分钟明细")
-        #expect(reopened.minuteSamples(from: old.addingTimeInterval(-600),
-                                       to: old.addingTimeInterval(600)).isEmpty)
-        #expect(!reopened.minuteSamples(from: recent.addingTimeInterval(-600),
-                                        to: recent.addingTimeInterval(600)).isEmpty)
-
-        // 但那一小时的小时级汇总仍然在 180 天内，必须保留（滚动汇总不该跟着明细一起消失）
-        let oldHour = reopened.summary(from: old.addingTimeInterval(-3600), to: old.addingTimeInterval(3600))
-        #expect(oldHour.networkIn == 700, "分钟明细清了，但小时级汇总还要能回答 8 天前的流量")
-        #expect(oldHour.hourly.count == 1)
+        let fresh = Date()
+        store.record(snapshot: makeSnapshot(at: fresh), interval: 1)
+        store.pruneForTesting(now: fresh)
+        #expect(store.debugRecordCounts.hours == 0, "跨天清理后 200 天前的小时桶消失")
+        #expect(store.debugRecordCounts.days == 1, "天级桶永久保留，不受清理影响")
     }
 
     @Test func hourDetailOlderThan180DaysIsPruned() throws {
@@ -397,8 +344,7 @@ struct HistoryRetentionTests {
 
         store.pruneForTesting(now: now)
         let counts = store.debugRecordCounts
-        #expect(counts.minutes == 1)
-        #expect(counts.hours == 1)
+        #expect(counts.hours == 1, "180 天前的小时桶被清理")
         #expect(counts.days == 2, "天级永久保留")
     }
 }
@@ -478,7 +424,8 @@ struct HistoryResetTests {
         // 权重：swift-frontend = 2.5 CPU 秒 × 1e8 = 2.5e8 > Safari 的 5.1e7
         #expect(summary.apps.first?.name == "swift-frontend")
         #expect(summary.apps.first?.cpuSeconds == 2.5)
-        #expect(summary.apps.first?.path == "/usr/bin/swift-frontend")
+        // name→path 旁表已弃用（界面只用应用名）：path 恒为 nil
+        #expect(summary.apps.first?.path == nil)
         #expect(summary.apps.last?.name == "Safari")
         #expect(summary.apps.last?.networkIn == 50_000_000)
     }
@@ -770,14 +717,14 @@ struct HistoryStorageTests {
         let store = try HistoryStore(directory: directory)
         store.record(snapshot: makeSnapshot(at: Date()), interval: 1)
         store.flush()
-        let minutesURL = directory.appendingPathComponent("History/minutes.bin")
-        #expect(FileManager.default.fileExists(atPath: minutesURL.path))
-        var data = try Data(contentsOf: minutesURL)
+        let hoursURL = directory.appendingPathComponent("History/hours.bin")
+        #expect(FileManager.default.fileExists(atPath: hoursURL.path))
+        var data = try Data(contentsOf: hoursURL)
         data.replaceSubrange(0..<4, with: Data("XXXX".utf8))
-        try data.write(to: minutesURL)
+        try data.write(to: hoursURL)
 
         let reopened = try HistoryStore(directory: directory)
-        #expect(reopened.debugRecordCounts.minutes == 0)
+        #expect(reopened.debugRecordCounts.hours == 0)
         let entries = try FileManager.default.contentsOfDirectory(atPath: directory.appendingPathComponent("History").path)
         #expect(entries.contains { $0.contains("corrupt") }, "坏文件应该被改名留档，而不是直接删掉")
     }
@@ -791,14 +738,14 @@ struct HistoryStorageTests {
         store.flush()
 
         // 追加半条记录 = 模拟"写一半断电"
-        let minutesURL = directory.appendingPathComponent("History/minutes.bin")
-        let handle = try FileHandle(forWritingTo: minutesURL)
+        let hoursURL = directory.appendingPathComponent("History/hours.bin")
+        let handle = try FileHandle(forWritingTo: hoursURL)
         try handle.seekToEnd()
-        try handle.write(contentsOf: Data(repeating: 0xAB, count: MinuteRecord.byteCount / 2))
+        try handle.write(contentsOf: Data(repeating: 0xAB, count: BucketRecord.byteCount / 2))
         try handle.close()
 
         let reopened = try HistoryStore(directory: directory)
-        #expect(reopened.debugRecordCounts.minutes == 1, "残缺尾巴必须被忽略，不能算成一条记录")
+        #expect(reopened.debugRecordCounts.hours == 1, "残缺尾巴必须被忽略，不能算成一条记录")
         #expect(reopened.today(now: now.addingTimeInterval(1)).networkIn == 100)
     }
 }
