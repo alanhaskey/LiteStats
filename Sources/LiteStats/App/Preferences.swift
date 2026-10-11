@@ -13,16 +13,16 @@ enum IndicatorMetric: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
-    var title: String {
+    @MainActor var title: String {
         switch self {
-        case .none: return "不显示"
-        case .cpu: return "CPU 占用"
-        case .memory: return "内存占用"
-        case .gpu: return "GPU 占用"
-        case .network: return "网络上下行"
-        case .disk: return "磁盘占用"
-        case .temperature: return "CPU 温度"
-        case .fan: return "风扇转速"
+        case .none: return Localization.shared.t("metric.none")
+        case .cpu: return Localization.shared.t("metric.cpu")
+        case .memory: return Localization.shared.t("metric.memory")
+        case .gpu: return Localization.shared.t("metric.gpu")
+        case .network: return Localization.shared.t("metric.network")
+        case .disk: return Localization.shared.t("metric.disk")
+        case .temperature: return Localization.shared.t("metric.temperature")
+        case .fan: return Localization.shared.t("metric.fan")
         }
     }
 
@@ -55,12 +55,12 @@ enum DisplayMode: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
-    var title: String {
+    @MainActor var title: String {
         switch self {
-        case .automatic: return "自动"
-        case .main: return "主屏"
-        case .all: return "全部屏幕"
-        case .specific: return "指定屏幕"
+        case .automatic: return Localization.shared.t("display.auto")
+        case .main: return Localization.shared.t("display.main")
+        case .all: return Localization.shared.t("display.all")
+        case .specific: return Localization.shared.t("display.specific")
         }
     }
 }
@@ -77,6 +77,7 @@ final class Preferences {
         static let leftIndicator = "leftIndicator"
         static let rightIndicator = "rightIndicator"
         static let launchAtLogin = "launchAtLogin"
+        static let language = "language"
         static let displayMode = "displayMode"
         static let specificDisplayID = "specificDisplayID"
         static let specificDisplayName = "specificDisplayName"
@@ -120,6 +121,15 @@ final class Preferences {
         didSet { defaults.set(launchAtLogin, forKey: Key.launchAtLogin) }
     }
 
+    /// 界面语言（默认跟随系统）
+    var language: AppLanguage {
+        didSet {
+            defaults.set(language.rawValue, forKey: Key.language)
+            Localization.shared.language = language
+            onChange?()
+        }
+    }
+
     /// 面板显示在哪块屏幕。多屏时可选"全部屏幕"或指定某一块。
     var displayMode: DisplayMode {
         didSet { defaults.set(displayMode.rawValue, forKey: Key.displayMode); onChange?() }
@@ -155,9 +165,13 @@ final class Preferences {
             .flatMap(IndicatorMetric.init(rawValue:)) ?? .none
         self.showMenuBarItem = defaults.object(forKey: Key.showMenuBarItem) as? Bool ?? true
         self.launchAtLogin = defaults.bool(forKey: Key.launchAtLogin)
+        self.language = defaults.string(forKey: Key.language)
+            .flatMap(AppLanguage.init(rawValue:)) ?? .system
         self.displayMode = defaults.string(forKey: Key.displayMode)
             .flatMap(DisplayMode.init(rawValue:)) ?? .automatic
         self.specificDisplayID = UInt32(defaults.integer(forKey: Key.specificDisplayID))
         self.specificDisplayName = defaults.string(forKey: Key.specificDisplayName) ?? ""
+        // 启动时同步已保存的语言（didSet 不会在初始化时触发）
+        Localization.shared.language = self.language
     }
 }

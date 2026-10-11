@@ -25,11 +25,18 @@ final class StatusItemController: NSObject {
             button.image = NSImage(systemSymbolName: "gauge.with.dots.needle.33percent",
                                    accessibilityDescription: "LiteStats")
             button.image?.isTemplate = true
-            button.toolTip = "LiteStats — 悬浮刘海查看系统状态"
+            button.toolTip = Localization.shared.t("menu.tooltip")
         }
 
         let menu = NSMenu()
         statusItem.menu = menu
+        buildMenu(menu)
+    }
+
+    /// 语言切换后重建菜单（NSMenuItem 的标题建好就固定了）
+    func rebuildMenu() {
+        guard let menu = statusItem.menu else { return }
+        menu.removeAllItems()
         buildMenu(menu)
     }
 
@@ -40,17 +47,17 @@ final class StatusItemController: NSObject {
 
     private func buildMenu(_ menu: NSMenu) {
         // 菜单保持极简：历史统计 / 设置 / 退出，其余都收在设置界面里。
-        let history = NSMenuItem(title: "历史统计", action: #selector(openHistory), keyEquivalent: "h")
+        let history = NSMenuItem(title: Localization.shared.t("menu.history"), action: #selector(openHistory), keyEquivalent: "h")
         history.target = self
         menu.addItem(history)
 
-        let settings = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
+        let settings = NSMenuItem(title: Localization.shared.t("menu.settings"), action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
 
         menu.addItem(.separator())
 
-        let quit = NSMenuItem(title: "退出 LiteStats",
+        let quit = NSMenuItem(title: Localization.shared.t("menu.quit"),
                               action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         menu.addItem(quit)
@@ -65,7 +72,7 @@ final class StatusItemController: NSObject {
     }
 
     private static func intervalTitle(_ value: Double) -> String {
-        value < 1 ? String(format: "%.1f 秒", value) : "\(Int(value)) 秒"
+        value < 1 ? L("interval.secondsFloat", value) : L("interval.secondsInt", Int(value))
     }
 
     // MARK: - Actions

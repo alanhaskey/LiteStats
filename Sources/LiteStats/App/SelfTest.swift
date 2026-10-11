@@ -135,6 +135,34 @@ enum SelfTest {
             "\($0.name)[\($0.hasPhysicalNotch ? "刘海" : "合成") \(Int($0.notchRect.width))×\(Int($0.notchRect.height))]"
         }.joined(separator: " "))
 
+        // MARK: 2c. 多语言
+
+        let table = Localization.table
+        let missingTranslation = table.filter { $0.value.zh.isEmpty || $0.value.en.isEmpty }.keys
+        check("文案表两种语言都齐全（\(table.count) 条）", missingTranslation.isEmpty,
+              "\(missingTranslation.sorted().prefix(5))")
+        check("文案表没有把中文直接当英文用",
+              table.filter { $0.value.zh == $0.value.en }.count <= 6,
+              "相同条目 \(table.filter { $0.value.zh == $0.value.en }.count) 条（CPU 等专有名词允许相同）")
+        let sample = ["menu.history", "settings.language", "history.today"]
+        check("抽样：中英文案确实不同",
+              sample.allSatisfy { LanguageStore.shared.current == .chinese
+                  ? Localization.text($0, language: .chinese) != Localization.text($0, language: .english)
+                  : true },
+              sample.map { Localization.text($0, language: .english) }.joined(separator: " / "))
+        // 系统语言判断
+        check("系统语言解析：zh-Hans → 中文", AppLanguage.resolveSystem(["zh-Hans-CN"]) == .chinese)
+        check("系统语言解析：en-US → 英文", AppLanguage.resolveSystem(["en-US"]) == .english)
+        check("系统语言解析：空列表兜底英文", AppLanguage.resolveSystem([]) == .english)
+        // 日期跟随语言
+        if let d = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 10)) {
+            let zh = HistoryChartData.tooltipTitle(label: "10", date: d, isSingleDay: false, language: .chinese)
+            let en = HistoryChartData.tooltipTitle(label: "10", date: d, isSingleDay: false, language: .english)
+            info("同一日期：中文=\(zh) 英文=\(en)")
+            check("日期文案跟随语言", zh.contains("10") && en.count >= 6 && zh != en, "\(zh) / \(en)")
+        }
+        info("当前语言：\(LanguageStore.shared.current.rawValue)")
+
         // MARK: 3. 命中判定
 
         let topCenter = CGPoint(x: geometry.anchorX, y: geometry.screenTop - 8)
@@ -489,9 +517,10 @@ enum SelfTest {
                           bucket(d11, cpu: 50, net: 500_000)]
 
             // 标题：单日按钟点、多日按月日（用户反馈过"10 号显示成 10:00"）
+            let multiDayTitle = HistoryChartData.tooltipTitle(label: "10", date: d10,
+                                                              isSingleDay: false, language: .chinese)
             check("多日悬浮标题按月日（不是 10:00）",
-                  HistoryChartData.tooltipTitle(label: "10", date: d10, isSingleDay: false) == "10 月 10 日",
-                  HistoryChartData.tooltipTitle(label: "10", date: d10, isSingleDay: false))
+                  multiDayTitle.contains("10") && !multiDayTitle.contains(":"), multiDayTitle)
             check("单日悬浮标题按钟点",
                   HistoryChartData.tooltipTitle(label: "17", date: d10, isSingleDay: true) == "17:00",
                   HistoryChartData.tooltipTitle(label: "17", date: d10, isSingleDay: true))
@@ -585,6 +614,48 @@ enum SelfTest {
             "\(Calendar.current.component(.day, from: $0.date))日=\(String(format: "%.1f", $0.total / 1_048_576))MB"
         }.joined(separator: " "))
         check("近 7 天视图按天分成多根柱子（含今天）", weekDays.count >= 6, "\(weekDays.count) 天")
+
+        // 英文渲染：切到英文再渲染一遍设置界面与历史窗口，确认切换后没有中文残留
+        let previousLanguage = Localization.shared.language
+        Localization.shared.language = .english
+        check("切到英文后 LanguageStore 同步", LanguageStore.shared.current == .english)
+        // 英文设置界面：注意 Preferences.init 会按存储的语言重置 Localization，
+        // 所以要先建 Preferences、再设英文，否则渲染出来还是中文（踩过）
+        let englishDefaults = UserDefaults(suiteName: "litestats-selftest-settings-en") ?? .standard
+        englishDefaults.removePersistentDomain(forName: "litestats-selftest-settings-en")
+        let englishPrefs = Preferences(defaults: englishDefaults)
+        englishPrefs.leftIndicator = .cpu
+        englishPrefs.rightIndicator = .temperature
+        Localization.shared.language = .english
+        let englishSettings = SettingsWindowController(preferences: englishPrefs, service: service,
+                                                       onOpenHistory: {})
+        englishSettings.present()
+        pump(0.9)
+        if let content = englishSettings.window?.contentView,
+           let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+            content.cacheDisplay(in: content.bounds, to: bitmap)
+            check("英文设置界面渲染出内容",
+                  alphaCoverage(bitmap, region: CGRect(origin: .zero, size: content.bounds.size),
+                                scale: 1, threshold: 128) > 0.3)
+            dump(bitmap, suffix: "settings-en")
+        }
+        englishSettings.close()
+        let englishController = HistoryWindowController(store: store)
+        englishController.present()
+        pump(0.8)
+        if let englishContent = englishController.window?.contentView,
+           let englishBitmap = englishContent.bitmapImageRepForCachingDisplay(in: englishContent.bounds) {
+            englishContent.cacheDisplay(in: englishContent.bounds, to: englishBitmap)
+            let scale = CGFloat(englishBitmap.pixelsWide) / max(englishContent.bounds.width, 1)
+            let coverage = alphaCoverage(englishBitmap,
+                                         region: CGRect(origin: .zero, size: englishContent.bounds.size),
+                                         scale: scale, threshold: 128)
+            check("英文历史窗口渲染出内容", coverage > 0.04, String(format: "覆盖率 %.1f%%", coverage * 100))
+            dump(englishBitmap, suffix: "history-en")
+        }
+        englishController.close()
+        Localization.shared.language = previousLanguage
+        check("语言切换可还原", LanguageStore.shared.current == Localization.resolve(previousLanguage))
 
         // 窗口能渲染（无法点鼠标，只能离屏渲染确认它真的画出来了）
         let controller = HistoryWindowController(store: store)

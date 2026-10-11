@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var screenObserver: NSObjectProtocol?
     /// 历史统计初始化失败的原因（点"历史统计"时展示真实原因，而不是笼统说目录不行）
     private var historyError: Error?
+    /// 上一次生效的语言（用于判断是否需要重建菜单）
+    private var lastAppliedLanguage: AppLanguage.Resolved?
     private var statusItem: StatusItemController?
     private var settingsWindow: SettingsWindowController?
     private var historyWindow: HistoryWindowController?
@@ -115,6 +117,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 设置项变化：重算布局 + 采样间隔 + 菜单栏图标 + 显隐目标屏幕
     private func applyPreferences() {
         guard let prefs, let service else { return }
+        // 语言变了：菜单项标题是建好就固定的，得重建
+        let resolvedLanguage = Localization.resolve(prefs.language)
+        if resolvedLanguage != lastAppliedLanguage {
+            lastAppliedLanguage = resolvedLanguage
+            statusItem?.rebuildMenu()
+        }
         rebuildPanels()
         applySamplingIntervals(prefs: prefs, service: service)
         updateServiceFlags()
@@ -263,20 +271,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         guard let store = historyStore else {
             let alert = NSAlert()
-            alert.messageText = "历史统计不可用"
+            alert.messageText = L("alert.historyUnavailable")
             if let error = historyError {
-                alert.informativeText = """
-                创建本地存储目录失败：
-
-                \(error.localizedDescription)
-
-                路径：\(HistoryStore.defaultStoragePath)
-                """
+                alert.informativeText = L("alert.historyStorageFailed",
+                                          error.localizedDescription,
+                                          HistoryStore.defaultStoragePath)
             } else {
-                alert.informativeText = "本地存储尚未初始化。"
+                alert.informativeText = L("alert.historyNotInitialized")
             }
-            alert.addButton(withTitle: "重试")
-            alert.addButton(withTitle: "关闭")
+            alert.addButton(withTitle: L("alert.retry"))
+            alert.addButton(withTitle: L("alert.close"))
             if alert.runModal() == .alertFirstButtonReturn {
                 showHistory()          // 重试一次（用户手动触发，不会自动循环）
             }

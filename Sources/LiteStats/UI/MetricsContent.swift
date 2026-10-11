@@ -1,6 +1,7 @@
 import LiteStatsCore
 import SwiftUI
 
+
 /// 每核心柱状图的几何（纯函数，便于按不同核心数单测）。
 ///
 /// 面板宽度是固定的（`Theme.panelWidth`），所以适配不同机型时**只改柱宽、不改窗口宽度**。
@@ -36,6 +37,7 @@ struct MetricsContent: View {
     private var snap: SystemSnapshot? { service.snapshot }
 
     var body: some View {
+        let _ = Localization.shared.resolved      // 订阅语言变化
         VStack(spacing: Theme.sectionSpacing) {
             cpuHeader.frame(height: 58)
             Hairline()
@@ -57,7 +59,7 @@ struct MetricsContent: View {
         let thermal = snap?.thermal
         return HStack(spacing: 16) {
             HStack(spacing: 4) {
-                Text("温度")
+                Text(L("panel.temperature"))
                     .font(.system(size: 9))
                     .foregroundStyle(Theme.subtle)
                 Text(thermal?.cpuTemperature.map { String(format: "%.0f°C", $0) } ?? "—")
@@ -77,7 +79,7 @@ struct MetricsContent: View {
                 }
             }
             HStack(spacing: 4) {
-                Text("风扇")
+                Text(L("panel.fan"))
                     .font(.system(size: 9))
                     .foregroundStyle(Theme.subtle)
                 Text(fanText(thermal))
@@ -117,7 +119,7 @@ struct MetricsContent: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
                     MetricLabel(text: "CPU")
-                    Text("\(cpu?.coreCount ?? service.coreCount) 核")
+                    Text(L("panel.cores", cpu?.coreCount ?? service.coreCount))
                         .font(.system(size: 10))
                         .foregroundStyle(Theme.subtle)
                 }
@@ -126,7 +128,9 @@ struct MetricsContent: View {
                     .monospacedDigit()
                     .foregroundStyle(color)
                     // 刻意不用 .contentTransition(.numericText())：数字滚动动画会让展开态 CPU 从 ~0.2% 升到 ~1%（每秒都在重排文字）
-                Text("用户 \(Fmt.percent(cpu?.user ?? 0, decimals: 0)) · 系统 \(Fmt.percent(cpu?.system ?? 0, decimals: 0)) · 空闲 \(Fmt.percent(cpu?.idle ?? 1, decimals: 0))")
+                Text(L("panel.userSystemIdle", Fmt.percent(cpu?.user ?? 0, decimals: 0),
+                        Fmt.percent(cpu?.system ?? 0, decimals: 0),
+                        Fmt.percent(cpu?.idle ?? 1, decimals: 0)))
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.label)
                     .lineLimit(1)
@@ -138,7 +142,7 @@ struct MetricsContent: View {
                           maxValue: SparkRange.adaptive(service.cpuHistory.values, floor: 0.15),
                           color: color)
                     .frame(width: 148, height: 34)
-                Text("负载 \(loadText)")
+                Text(L("panel.load", loadText))
                     .font(.system(size: 9))
                     .monospacedDigit()
                     .foregroundStyle(Theme.subtle)
@@ -224,7 +228,7 @@ struct MetricsContent: View {
                 .monospacedDigit()
                 .foregroundStyle(Theme.gpu)
             MiniBar(value: util ?? 0, color: Theme.gpu)
-            Text(gpu?.inUseMemory.map { "显存 " + Fmt.bytes($0) } ?? "不可用")
+            Text(gpu?.inUseMemory.map { L("panel.vram", Fmt.bytes($0)) } ?? L("panel.unavailable"))
                 .font(.system(size: 9))
                 .foregroundStyle(Theme.subtle)
                 .lineLimit(1)
@@ -237,7 +241,7 @@ struct MetricsContent: View {
         let mem = snap?.memory
         let usage = mem?.usage ?? 0
         return VStack(alignment: .leading, spacing: 3) {
-            MetricLabel(text: "内存")
+            MetricLabel(text: L("panel.memory"))
             Text(Fmt.percent(usage, decimals: 0))
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .monospacedDigit()
@@ -256,9 +260,9 @@ struct MetricsContent: View {
         guard let mem = snap?.memory else { return "—" }
         var text = "\(Fmt.bytes(mem.used)) / \(Fmt.bytes(mem.total))"
         if mem.swapUsed > 0 {
-            text += " · 交换 \(Fmt.bytes(mem.swapUsed))"
+            text += L("panel.swap", Fmt.bytes(mem.swapUsed))
         } else if mem.cached > 0 {
-            text += " · 缓存 \(Fmt.bytes(mem.cached))"
+            text += L("panel.cached", Fmt.bytes(mem.cached))
         }
         return text
     }
@@ -268,7 +272,7 @@ struct MetricsContent: View {
         let down = service.downHistory.values
         let up = service.upHistory.values
         return VStack(alignment: .leading, spacing: 2) {
-            MetricLabel(text: "网络")
+            MetricLabel(text: L("panel.network"))
             Sparkline(values: down,
                       maxValue: SparkRange.network(down, up),
                       color: Theme.down,
@@ -301,7 +305,7 @@ struct MetricsContent: View {
         HStack(spacing: 0) {
             Text(diskText)
             Spacer(minLength: 6)
-            Text("已开机 \(snap.map { Fmt.uptime($0.uptime) } ?? "—")")
+            Text(snap.map { L("panel.uptime", Fmt.uptime($0.uptime)) } ?? "—")
         }
         .font(.system(size: 9))
         .foregroundStyle(Theme.subtle)
@@ -310,8 +314,8 @@ struct MetricsContent: View {
     }
 
     private var diskText: String {
-        guard let disk = snap?.disk else { return "磁盘 —" }
-        var text = "磁盘 \(Fmt.percent(disk.usage, decimals: 0)) 已用 · 可用 \(Fmt.bytes(disk.free))"
+        guard let disk = snap?.disk else { return L("panel.diskEmpty") }
+        var text = L("panel.disk", Fmt.percent(disk.usage, decimals: 0), Fmt.bytes(disk.free))
         if let iface = snap?.network.interfaceName {
             text += " · \(iface)"
         }

@@ -3,7 +3,7 @@
 <img src="docs/images/icon.png" width="110" align="right" alt="LiteStats 图标" />
 
 ![平台](https://img.shields.io/badge/platform-macOS%2014%2B-black)
-![版本](https://img.shields.io/badge/version-1.0.3-blue)
+![版本](https://img.shields.io/badge/version-1.1.0-blue)
 ![许可](https://img.shields.io/badge/license-MIT-green)
 
 **一个住在 MacBook 刘海里的轻量系统监控。**
@@ -24,6 +24,7 @@
 - **支持外接屏** —— 没有刘海的屏幕，在顶部中央显示一颗常驻小胶囊
 - **本地历史** —— 按天查看的日历、每小时的负载、按应用的占用，全部只存在本机
 - **开销很低** —— 空闲时约 0.1% CPU、16 MB 内存
+- **中文 / English** —— 默认跟随系统语言，也可以在设置里切换
 - **零依赖** —— 纯 Swift + 系统框架
 
 | 常驻指示条 | 外接屏上的收起态 | 历史统计 |
@@ -36,7 +37,7 @@ macOS 14 或更高版本，Apple Silicon。
 
 ## 安装
 
-1. 到 [Releases](https://github.com/alanhaskey/LiteStats/releases) 下载 `LiteStats-1.0.3.dmg`
+1. 到 [Releases](https://github.com/alanhaskey/LiteStats/releases) 下载 `LiteStats-1.1.0.dmg`
 2. 打开后把 **LiteStats** 拖进「应用程序」
 3. 启动即可 —— 应用常驻后台，不显示 Dock 图标
 

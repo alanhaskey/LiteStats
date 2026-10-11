@@ -7,6 +7,7 @@ import ServiceManagement
 /// 但本机是 ad-hoc 签名、且开发时常常直接跑 `.build` 里的二进制，
 /// 这种情况下 `register()` 会抛错 —— 于是退回写一个 LaunchAgent plist。
 /// 两条路都幂等：关闭时两处都清理。
+@MainActor
 enum LaunchAtLogin {
     static let agentLabel = "dev.litestats.app"
 
@@ -38,18 +39,18 @@ enum LaunchAtLogin {
         if #available(macOS 13.0, *) {
             do {
                 try SMAppService.mainApp.register()
-                return "已通过系统登录项注册（SMAppService）"
+                return Localization.shared.t("launch.registered")
             } catch {
                 // 常见于：ad-hoc 签名 / 未放在 /Applications —— 退回 LaunchAgent
                 return installLaunchAgent(reason: error.localizedDescription)
             }
         }
-        return installLaunchAgent(reason: "系统版本低于 13")
+        return installLaunchAgent(reason: Localization.shared.t("launch.tooOld"))
     }
 
     private static func installLaunchAgent(reason: String) -> String {
         guard let executable = Bundle.main.executablePath else {
-            return "找不到可执行文件路径，无法设置开机自启"
+            return Localization.shared.t("launch.noExecutable")
         }
         let plist: [String: Any] = [
             "Label": agentLabel,
@@ -63,9 +64,9 @@ enum LaunchAtLogin {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
             try data.write(to: agentURL, options: .atomic)
-            return "已写入 LaunchAgent（SMAppService 不可用：\(reason)）"
+            return Localization.shared.t("launch.agent") + "（\(reason)）"
         } catch {
-            return "设置失败：\(error.localizedDescription)"
+            return Localization.shared.t("launch.failed", error.localizedDescription)
         }
     }
 
@@ -75,20 +76,20 @@ enum LaunchAtLogin {
             if SMAppService.mainApp.status == .enabled {
                 do {
                     try SMAppService.mainApp.unregister()
-                    notes.append("已从系统登录项移除")
+                    notes.append(Localization.shared.t("launch.removed"))
                 } catch {
-                    notes.append("移除登录项失败：\(error.localizedDescription)")
+                    notes.append(Localization.shared.t("launch.removeFailed", error.localizedDescription))
                 }
             }
         }
         if hasLaunchAgent {
             do {
                 try FileManager.default.removeItem(at: agentURL)
-                notes.append("已删除 LaunchAgent")
+                notes.append(Localization.shared.t("launch.removedAgent"))
             } catch {
-                notes.append("删除 LaunchAgent 失败：\(error.localizedDescription)")
+                notes.append(Localization.shared.t("launch.deleteFailed", error.localizedDescription))
             }
         }
-        return notes.isEmpty ? "已关闭（原本未启用）" : notes.joined(separator: "；")
+        return notes.isEmpty ? Localization.shared.t("launch.off") : notes.joined(separator: Localization.shared.t("launch.join"))
     }
 }

@@ -47,13 +47,14 @@ enum Fmt {
     }
 
     /// 秒 → “3 天 4 小时”
+    @MainActor
     static func uptime(_ seconds: TimeInterval) -> String {
         let total = Int(seconds)
         let days = total / 86400
         let hours = (total % 86400) / 3600
         let minutes = (total % 3600) / 60
-        if days > 0 { return "\(days) 天 \(hours) 小时" }
-        if hours > 0 { return "\(hours) 小时 \(minutes) 分" }
-        return "\(minutes) 分"
+        if days > 0 { return Localization.shared.t("uptime.daysHours", days, hours) }
+        if hours > 0 { return Localization.shared.t("uptime.hoursMinutes", hours, minutes) }
+        return Localization.shared.t("uptime.minutes", minutes)
     }
 }

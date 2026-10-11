@@ -3,7 +3,7 @@
 <img src="docs/images/icon.png" width="110" align="right" alt="LiteStats icon" />
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-black)
-![Version](https://img.shields.io/badge/version-1.0.3-blue)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **A lightweight system monitor that lives in the MacBook notch.**
@@ -24,6 +24,7 @@ Move away and it tucks itself back in — no menu bar space, no Dock icon.
 - **External displays too** — screens without a notch get a small always-visible pill at the top center
 - **Local history** — a calendar of past days, hourly load and per-app usage, stored only on your Mac
 - **Light on resources** — roughly 0.1% CPU and 16 MB of memory at idle
+- **English / 简体中文** — follows the system language, switchable in Settings
 - **No dependencies** — pure Swift and system frameworks
 
 | Indicators | Collapsed pill (external display) | History |
@@ -36,7 +37,7 @@ macOS 14 or later, Apple Silicon.
 
 ## Install
 
-1. Download `LiteStats-1.0.3.dmg` from [Releases](https://github.com/alanhaskey/LiteStats/releases)
+1. Download `LiteStats-1.1.0.dmg` from [Releases](https://github.com/alanhaskey/LiteStats/releases)
 2. Open it and drag **LiteStats** into *Applications*
 3. Launch it — the app runs in the background with no Dock icon
 

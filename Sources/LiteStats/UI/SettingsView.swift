@@ -2,6 +2,7 @@ import AppKit
 import LiteStatsCore
 import SwiftUI
 
+
 /// 设置界面。只在窗口打开时存在，关闭即释放（不影响常驻开销）。
 struct SettingsView: View {
     @Bindable var preferences: Preferences
@@ -10,7 +11,9 @@ struct SettingsView: View {
     let onOpenHistory: () -> Void
 
     @State private var launchNote: String = ""
-    @State private var costText: String = "测量中…"
+    /// 自身开销文案（还没测出来时显示"测量中…"）
+    @State private var costText: String = ""
+    private var costDisplay: String { costText.isEmpty ? L("settings.measuring") : costText }
     @State private var lastCPU: Double = 0
     @State private var lastSampleTime = Date()
 
@@ -20,9 +23,11 @@ struct SettingsView: View {
     private let collapsedChoices: [Double] = [1, 2, 5, 10]
 
     var body: some View {
+        let _ = Localization.shared.resolved      // 订阅语言变化，切换后立即重绘
         Form {
             indicatorSection
             displaySection
+            languageSection
             samplingSection
             historySection
             generalSection
@@ -33,7 +38,7 @@ struct SettingsView: View {
         .onAppear {
             lastCPU = SelfBenchmark.cpuSecondsAndRSS().cpu
             lastSampleTime = Date()
-            launchNote = LaunchAtLogin.isEnabled ? "当前已启用" : "当前未启用"
+            launchNote = LaunchAtLogin.isEnabled ? L("settings.enabled") : L("settings.disabled")
         }
         .onReceive(costTimer) { _ in updateCost() }
     }
@@ -41,26 +46,26 @@ struct SettingsView: View {
     // MARK: - 常驻指示条
 
     private var indicatorSection: some View {
-        Section("刘海常驻指示条") {
-            Picker("左侧显示", selection: $preferences.leftIndicator) {
+        Section(L("section.indicators")) {
+            Picker(L("settings.leftMetric"), selection: $preferences.leftIndicator) {
                 ForEach(IndicatorMetric.allCases) { metric in
                     Text(metric.title).tag(metric)
                 }
             }
-            Picker("右侧显示", selection: $preferences.rightIndicator) {
+            Picker(L("settings.rightMetric"), selection: $preferences.rightIndicator) {
                 ForEach(IndicatorMetric.allCases) { metric in
                     Text(metric.title).tag(metric)
                 }
             }
             HStack {
-                Text("黑耳长度")
+                Text(L("settings.earWidth"))
                 Slider(value: $preferences.earWidth, in: 56...160, step: 4)
                 Text("\(Int(preferences.earWidth)) pt")
                     .monospacedDigit()
                     .frame(width: 52, alignment: .trailing)
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("预览")
+                Text(L("settings.preview"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 NotchPreview(left: preferences.leftIndicator,
@@ -71,11 +76,23 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - 语言
+
+    private var languageSection: some View {
+        Section(L("section.language")) {
+            Picker(L("settings.language"), selection: $preferences.language) {
+                ForEach(AppLanguage.allCases) { language in
+                    Text(language.title).tag(language)
+                }
+            }
+        }
+    }
+
     // MARK: - 显示位置
 
     private var displaySection: some View {
-        Section("显示位置") {
-            Picker("显示在", selection: $preferences.displayMode) {
+        Section(L("section.display")) {
+            Picker(L("settings.showOn"), selection: $preferences.displayMode) {
                 ForEach(DisplayMode.allCases) { mode in
                     Text(mode.title).tag(mode)
                 }
@@ -88,7 +105,7 @@ struct SettingsView: View {
                 }
             }
             if preferences.displayMode == .specific {
-                Picker("屏幕", selection: specificDisplayBinding) {
+                Picker(L("settings.screen"), selection: specificDisplayBinding) {
                     ForEach(Self.availableScreens, id: \.id) { screen in
                         Text(screen.label).tag(screen.id)
                     }
@@ -106,8 +123,8 @@ struct SettingsView: View {
         NSScreen.screens.map { screen in
             let id = ScreenGeometry.displayID(of: screen)
             var marks: [String] = []
-            if screen == NSScreen.main { marks.append("主屏") }
-            marks.append(ScreenGeometry.detectNotch(of: screen) != nil ? "有刘海" : "无刘海")
+            if screen == NSScreen.main { marks.append(L("display.mainMark")) }
+            marks.append(Localization.shared.t(ScreenGeometry.detectNotch(of: screen) != nil ? "display.notchMark" : "display.noNotchMark"))
             return ScreenOption(id: id, label: "\(screen.localizedName)（\(marks.joined(separator: "·"))）")
         }
     }
@@ -126,13 +143,13 @@ struct SettingsView: View {
     // MARK: - 采样
 
     private var samplingSection: some View {
-        Section("采样") {
-            Picker("展开时刷新", selection: $preferences.expandedInterval) {
+        Section(L("section.sampling")) {
+            Picker(L("settings.expandedInterval"), selection: $preferences.expandedInterval) {
                 ForEach(expandedChoices, id: \.self) { value in
                     Text(intervalTitle(value)).tag(value)
                 }
             }
-            Picker("收起时刷新", selection: $preferences.collapsedInterval) {
+            Picker(L("settings.collapsedInterval"), selection: $preferences.collapsedInterval) {
                 ForEach(collapsedChoices, id: \.self) { value in
                     Text(intervalTitle(value)).tag(value)
                 }
@@ -141,15 +158,15 @@ struct SettingsView: View {
     }
 
     private func intervalTitle(_ value: Double) -> String {
-        value < 1 ? String(format: "%.1f 秒", value) : "\(Int(value)) 秒"
+        value < 1 ? L("interval.secondsFloat", value) : L("interval.secondsInt", Int(value))
     }
 
     // MARK: - 通用
 
     private var generalSection: some View {
-        Section("通用") {
-            Toggle("在菜单栏显示图标", isOn: $preferences.showMenuBarItem)
-            Toggle("开机自动启动", isOn: $preferences.launchAtLogin)
+        Section(L("section.general")) {
+            Toggle(L("settings.menuBarIcon"), isOn: $preferences.showMenuBarItem)
+            Toggle(L("settings.launchAtLogin"), isOn: $preferences.launchAtLogin)
                 .onChange(of: preferences.launchAtLogin) { _, newValue in
                     launchNote = LaunchAtLogin.set(enabled: newValue)
                 }
@@ -165,11 +182,11 @@ struct SettingsView: View {
     // MARK: - 历史统计
 
     private var historySection: some View {
-        Section("历史统计") {
+        Section(L("section.history")) {
             HStack {
-                Text("本地记录流量、CPU/GPU/内存与应用占用")
+                Text(L("settings.historyNote"))
                 Spacer()
-                Button("打开历史统计…") { onOpenHistory() }
+                Button(L("settings.openHistory")) { onOpenHistory() }
             }
         }
     }
@@ -177,18 +194,18 @@ struct SettingsView: View {
     // MARK: - 关于
 
     private var aboutSection: some View {
-        Section("关于") {
-            LabeledContent("版本", value: Self.version)
-            LabeledContent("本 App 开销", value: costText)
+        Section(L("section.about")) {
+            LabeledContent(L("settings.version"), value: Self.version)
+            LabeledContent(L("settings.cost"), value: costDisplay)
             HStack {
-                Button("退出 LiteStats") { NSApp.terminate(nil) }
+                Button(L("settings.quit")) { NSApp.terminate(nil) }
                 Spacer()
             }
         }
     }
 
     private static var version: String {
-        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.3"
+        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.0"
         return "LiteStats \(short)"
     }
 
@@ -200,8 +217,8 @@ struct SettingsView: View {
         lastCPU = usage.cpu
         lastSampleTime = now
         let percent = wall > 0 ? cpuDelta / wall * 100 : 0
-        costText = String(format: "%.2f%% CPU · %.1f MB 物理占用",
-                          percent, Double(SelfBenchmark.physicalFootprint()) / 1_048_576)
+        costText = L("settings.costValue", percent,
+                       Double(SelfBenchmark.physicalFootprint()) / 1_048_576)
     }
 }
 
