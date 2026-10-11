@@ -215,6 +215,10 @@ api("PATCH", f"/git/refs/heads/{BRANCH}", {"sha": head, "force": True})
 # ---------------------------------------------------------------- tags
 
 print("==> 6/6 同步 tag")
+try:
+    existing_refs = {item["ref"] for item in api("GET", "/git/refs/tags")}
+except SystemExit:
+    existing_refs = set()
 for ref in git("tag", "-l").split():
     info = parse_tag(ref)
     tag_obj = api("POST", "/git/tags", {
@@ -224,7 +228,12 @@ for ref in git("tag", "-l").split():
         "type": "commit",
         "tagger": info["tagger"],
     })
-    api("POST", "/git/refs", {"ref": f"refs/tags/{ref}", "sha": tag_obj["sha"]})
-    print(f"    {ref} -> {tag_obj['sha'][:10]}")
+    full = f"refs/tags/{ref}"
+    if full in existing_refs:
+        api("PATCH", f"/git/refs/tags/{ref}", {"sha": tag_obj["sha"], "force": True})
+        print(f"    {ref} 已存在 → 更新为 {tag_obj['sha'][:10]}")
+    else:
+        api("POST", "/git/refs", {"ref": full, "sha": tag_obj["sha"]})
+        print(f"    {ref} 新建 -> {tag_obj['sha'][:10]}")
 
 print(f"\n完成，共 {calls} 次 API 调用；远端 HEAD = {head}")
