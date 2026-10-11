@@ -557,6 +557,35 @@ enum SelfTest {
                   "非空 \(slots.filter { !$0.isEmpty }.count) 个，峰值时刻 \(slots.firstIndex { $0.isPeak } ?? -1)")
         }
 
+        // 灌入过去 6 天的少量数据，用来验证"近 7 天"视图（每天的值应该互不相同、按天成柱）
+        let base = monitor.sample()
+        let today = Calendar.current.startOfDay(for: Date())
+        for dayOffset in 1...6 {
+            guard let dayStart = Calendar.current.date(byAdding: .day, value: -dayOffset, to: today) else { continue }
+            for hour in [9, 14, 20] {
+                guard let stamp = Calendar.current.date(byAdding: .hour, value: hour, to: dayStart) else { continue }
+                // 每天的量不同，方便肉眼确认柱子是按天分的
+                let factor = Double(7 - dayOffset)
+                let snapshot = SystemSnapshot(
+                    timestamp: stamp, cpu: base.cpu, memory: base.memory, gpu: base.gpu,
+                    network: NetworkStats(download: factor * 1_000_000, upload: factor * 100_000,
+                                          received: base.network.received + UInt64(factor * 3_000_000),
+                                          sent: base.network.sent + UInt64(factor * 300_000),
+                                          interfaceName: base.network.interfaceName,
+                                          isConnected: base.network.isConnected),
+                    disk: base.disk, uptime: base.uptime, thermalState: base.thermalState,
+                    sampleIndex: 1, thermal: base.thermal)
+                store.record(snapshot: snapshot, interval: 3600)
+            }
+        }
+        store.flush()
+        let weekSummary = store.lastDays(7)
+        let weekDays = HistoryChartData.dailyTotals(hourly: weekSummary.hourly, metric: .network)
+        info("近 7 天汇总：" + weekDays.map {
+            "\(Calendar.current.component(.day, from: $0.date))日=\(String(format: "%.1f", $0.total / 1_048_576))MB"
+        }.joined(separator: " "))
+        check("近 7 天视图按天分成多根柱子（含今天）", weekDays.count >= 6, "\(weekDays.count) 天")
+
         // 窗口能渲染（无法点鼠标，只能离屏渲染确认它真的画出来了）
         let controller = HistoryWindowController(store: store)
         controller.present()
@@ -578,6 +607,23 @@ enum SelfTest {
                   && (ink?.height ?? 0) > content.bounds.height * 0.7,
                   "着色 \(String(format: "%.1f%%", coverage * 100)) 范围 \(ink.map { rect($0) } ?? "无")")
             dump(bitmap, suffix: "history")
+
+            // 再渲染一张"近 7 天"的（每天负载视图：柱子按天、悬浮显示月日）
+            let weekController = HistoryWindowController(store: store, initialSelection: .last7Days)
+            weekController.present()
+            pump(0.8)
+            if let weekContent = weekController.window?.contentView,
+               let weekBitmap = weekContent.bitmapImageRepForCachingDisplay(in: weekContent.bounds) {
+                weekContent.cacheDisplay(in: weekContent.bounds, to: weekBitmap)
+                let weekScale = CGFloat(weekBitmap.pixelsWide) / max(weekContent.bounds.width, 1)
+                let weekCoverage = alphaCoverage(weekBitmap,
+                                                 region: CGRect(origin: .zero, size: weekContent.bounds.size),
+                                                 scale: weekScale, threshold: 128)
+                check("近 7 天视图渲染出内容", weekCoverage > 0.04,
+                      String(format: "覆盖率 %.1f%%", weekCoverage * 100))
+                dump(weekBitmap, suffix: "history-week")
+            }
+            weekController.close()
         } else {
             check("历史统计窗口离屏渲染可用", false, "contentView/bitmap 为 nil")
         }

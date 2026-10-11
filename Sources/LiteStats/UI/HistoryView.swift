@@ -7,6 +7,8 @@ import SwiftUI
 /// 日历格子按当前指标着色（越深越忙），可以直接看出哪几天用得多。
 struct HistoryView: View {
     let store: HistoryStore
+    /// 打开时选中哪个区间（`--selftest` 用它渲染"近 7 天 / 本月"的离屏图）
+    var initialSelection: HistorySelection = .today
 
     @State private var selection: HistorySelection = .today
     @State private var displayMonth: Date = HistoryCalendar.startOfMonth(for: Date())
@@ -33,6 +35,7 @@ struct HistoryView: View {
         .task(id: selection) { reloadSummary() }
         .task(id: HeatKey(month: displayMonth, metric: chartMetric)) { reloadMonthHeat() }
         .onAppear {
+            selection = initialSelection
             reloadSummary()
             reloadMonthHeat()
         }

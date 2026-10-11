@@ -7,7 +7,7 @@ import SwiftUI
 final class HistoryWindowController: NSWindowController, NSWindowDelegate {
     var onClose: (() -> Void)?
 
-    init(store: HistoryStore) {
+    init(store: HistoryStore, initialSelection: HistorySelection = .today) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 748),
             styleMask: [.titled, .closable, .miniaturizable],   // 固定尺寸，不允许拖拽调整
@@ -19,7 +19,7 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
 
         window.delegate = self
-        let host = NSHostingView(rootView: HistoryView(store: store))
+        let host = NSHostingView(rootView: HistoryView(store: store, initialSelection: initialSelection))
         host.sizingOptions = []
         host.frame = window.contentView?.bounds ?? .zero
         host.autoresizingMask = [.width, .height]
