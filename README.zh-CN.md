@@ -3,7 +3,7 @@
 <img src="docs/images/icon.png" width="110" align="right" alt="LiteStats 图标" />
 
 ![平台](https://img.shields.io/badge/platform-macOS%2014%2B-black)
-![版本](https://img.shields.io/badge/version-1.2.0-blue)
+![版本](https://img.shields.io/badge/version-1.3.0-blue)
 ![许可](https://img.shields.io/badge/license-MIT-green)
 
 **一个住在 MacBook 刘海里的轻量系统监控。**
@@ -37,7 +37,7 @@ macOS 14 或更高版本，Apple Silicon。
 
 ## 安装
 
-1. 到 [Releases](https://github.com/alanhaskey/LiteStats/releases) 下载 `LiteStats-1.2.0.dmg`
+1. 到 [Releases](https://github.com/alanhaskey/LiteStats/releases) 下载 `LiteStats-1.3.0.dmg`
 2. 打开后把 **LiteStats** 拖进「应用程序」
 3. 启动即可 —— 应用常驻后台，不显示 Dock 图标
 

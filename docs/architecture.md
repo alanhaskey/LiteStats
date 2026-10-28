@@ -298,3 +298,19 @@ public final class SystemMonitor: @unchecked Sendable {
 **效果**：重启后本地存储 **460 KB → 200 KB**；按新规则外推稳态从约 **6.2 MB → 200–350 KB**。
 没有做记录量化（128B → 48B）：阈值收紧后它的边际收益只剩约 0.6 MB，却要动二进制格式、
 清空现有历史，不划算。
+
+## 14. 网络信息（IP / 网关 / 连接方式）
+
+面板底行上方新增一行：`Wi-Fi  IP 192.168.0.7  网关 192.168.1.1`（面板高度 255 → 273）。
+
+- **IPv4 地址**：`getifaddrs` 枚举里取主接口的 `AF_INET` 项。
+  坑：手算 `sockaddr_in.sin_addr` 偏移很容易错（Darwin 上是
+  `sin_len(1) + sin_family(1) + sin_port(2)` = 4 字节，我按 5 算过一次，读出 `0.0.0.1`）。
+  用 `UnsafeRawPointer(addr).assumingMemoryBound(to: sockaddr_in.self)` 类型化绑定即可。
+- **默认网关**：`SCDynamicStore` 的 `State:/Network/Global/IPv4` → `Router`，
+  和 `PrimaryInterface` 同一次查询拿到，跟随原有的 2 秒 TTL 缓存。
+- **连接方式**：**不能按接口名猜**（Apple Silicon 上 en0 通常是 Wi-Fi，但接雷雳网卡/以太网时
+  主接口可能是 en5、en7）。用 `SCNetworkInterfaceCopyAll()` 按 BSD 名匹配，
+  读 `SCNetworkInterfaceGetInterfaceType()` → IEEE80211=Wi-Fi、Ethernet=以太网、
+  WWAN=蜂窝、PPP/IPSec=VPN、Bridge/Bond/VLAN=对应类型。
+  界面显示的是本地化后的"Wi-Fi / 以太网"，而不是 en0 这种标识。

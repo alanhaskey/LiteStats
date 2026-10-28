@@ -45,12 +45,58 @@ struct MetricsContent: View {
             Hairline()
             bottomCells.frame(height: 56)
             Hairline()
+            networkInfoRow.frame(height: 12)
+            Hairline()
             thermalRow.frame(height: 14)
             Hairline()
             footer.frame(height: 13)
         }
         .padding(Theme.padding)
         .frame(width: Theme.panelWidth, height: Theme.bodyHeight, alignment: .top)
+    }
+
+    // MARK: - 网络信息（网卡 / IP / 网关）
+
+    /// 网卡、本机 IPv4 与默认网关。这几个值变化很慢，但每拍都会随快照一起刷新，
+    /// 成本可以忽略（读取在 NetworkSensor 里带 TTL 缓存）。
+    private var networkInfoRow: some View {
+        let net = snap?.network
+        let ip = net?.ipAddress
+        let gateway = net?.gateway
+        return HStack(spacing: 6) {
+            // 显示"Wi-Fi / 以太网"这类连接方式，而不是 en0 这种网口标识
+            Text(connectionLabel(net?.connectionKind))
+                .foregroundStyle(Theme.value)
+            if let ip {
+                Text("IP").foregroundStyle(Theme.subtle)
+                Text(ip).foregroundStyle(Theme.value)
+            } else {
+                Text(L("panel.noAddress")).foregroundStyle(Theme.subtle)
+            }
+            if let gateway {
+                Text(L("panel.gateway", gateway)).foregroundStyle(Theme.subtle)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 9, weight: .medium))
+        .monospacedDigit()
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
+    }
+
+    /// 连接方式的中英文名字（en0 在 Apple Silicon 上通常是 Wi-Fi，但接了网卡就会变，所以看类型）
+    private func connectionLabel(_ kind: ConnectionKind?) -> String {
+        switch kind {
+        case .wifi: return L("connection.wifi")
+        case .ethernet: return L("connection.ethernet")
+        case .cellular: return L("connection.cellular")
+        case .vpn: return L("connection.vpn")
+        case .bridge: return L("connection.bridge")
+        case .bond: return L("connection.bond")
+        case .vlan: return L("connection.vlan")
+        case .other: return L("connection.other")
+        case nil: return L("connection.unknown")
+        }
     }
 
     // MARK: - 温度 / 风扇
@@ -316,9 +362,6 @@ struct MetricsContent: View {
     private var diskText: String {
         guard let disk = snap?.disk else { return L("panel.diskEmpty") }
         var text = L("panel.disk", Fmt.percent(disk.usage, decimals: 0), Fmt.bytes(disk.free))
-        if let iface = snap?.network.interfaceName {
-            text += " · \(iface)"
-        }
         return text
     }
 }

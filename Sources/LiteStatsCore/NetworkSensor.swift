@@ -27,6 +27,8 @@ struct InterfaceInfo {
     var isLoopback: Bool
     /// 是否已配置 IPv4/IPv6 地址（用来判断"真的连通"而不只是网卡 up）
     var hasAddress: Bool
+    /// 该接口的 IPv4 地址（点分十进制）；没有 IPv4 时为 nil
+    var ipv4Address: String?
 }
 
 /// 计数器来源；两个来源之间不能直接做差（量纲不同），切换时这一拍速率为 0。
@@ -45,6 +47,8 @@ final class NetworkSensor {
 
     // 增量状态（被 SystemMonitor 的锁保护）
     private var previousName: String?
+    /// 上一次的主接口 IPv4（降级路径复用，避免界面闪 None）
+    private var previousIP: String?
     private var previousReceived: UInt64 = 0
     private var previousSent: UInt64 = 0
     private var previousTime: TimeInterval?
@@ -62,14 +66,18 @@ final class NetworkSensor {
             // 完全枚举不到接口：返回上次的累计值 + 0 速率，不抛错。
             return NetworkStats(download: 0, upload: 0,
                                 received: previousReceived, sent: previousSent,
-                                interfaceName: previousName, isConnected: false)
+                                interfaceName: previousName, isConnected: false,
+                                ipAddress: previousIP, gateway: cachedGateway,
+                                connectionKind: cachedKind)
         }
 
         let primary = resolvePrimaryInterface(now: now)
         guard let chosen = chooseInterface(from: interfaces, primary: primary) else {
             return NetworkStats(download: 0, upload: 0,
                                 received: previousReceived, sent: previousSent,
-                                interfaceName: previousName, isConnected: false)
+                                interfaceName: previousName, isConnected: false,
+                                ipAddress: previousIP, gateway: cachedGateway,
+                                connectionKind: cachedKind)
         }
 
         // 优先 IFMIB 的 64 位真值，失败再退回 getifaddrs 的 32 位计数。
@@ -100,6 +108,7 @@ final class NetworkSensor {
             : 0
 
         previousName = chosen.name
+        previousIP = chosen.ipv4Address
         previousReceived = received
         previousSent = sent
         previousTime = now
@@ -108,12 +117,16 @@ final class NetworkSensor {
         return NetworkStats(download: download, upload: upload,
                             received: received, sent: sent,
                             interfaceName: chosen.name,
-                            isConnected: chosen.isUp && chosen.hasAddress)
+                            isConnected: chosen.isUp && chosen.hasAddress,
+                            ipAddress: chosen.ipv4Address,
+                            gateway: cachedGateway,
+                            connectionKind: cachedKind)
     }
 
     /// 清空增量状态：下一拍只建立基线（速率为 0）。
     func reset() {
         previousName = nil
+        previousIP = nil
         previousReceived = 0
         previousSent = 0
         previousTime = nil
@@ -146,6 +159,11 @@ final class NetworkSensor {
     }
 
     /// 读 `State:/Network/Global/IPv4` 的 PrimaryInterface，带 TTL 缓存。
+    /// 缓存的默认网关（和 PrimaryInterface 同一次 configd 查询拿到）
+    private var cachedGateway: String?
+    /// 缓存的主接口连接方式
+    private var cachedKind: ConnectionKind?
+
     private func resolvePrimaryInterface(now: TimeInterval) -> String? {
         if now - lastPrimaryLookup < primaryTTL { return cachedPrimary }
         lastPrimaryLookup = now
@@ -159,10 +177,43 @@ final class NetworkSensor {
         guard let value = SCDynamicStoreCopyValue(store, key) as? [String: Any],
               let name = value["PrimaryInterface"] as? String, !name.isEmpty else {
             cachedPrimary = nil
+            cachedGateway = nil
             return nil
         }
         cachedPrimary = name
+        cachedGateway = value["Router"] as? String
+        cachedKind = Self.connectionKind(ofBSDName: name)
         return name
+    }
+
+    /// 用 SystemConfiguration 的接口类型判断"Wi-Fi / 以太网 / 蜂窝"。
+    ///
+    /// ⚠️ 不能按接口名猜：Apple Silicon 上 en0 通常是 Wi-Fi，但接了以太网/雷雳网卡时
+    /// 主接口也可能是 en5、en7 之类，光看名字分不出来。`SCNetworkInterfaceCopyAll()`
+    /// 会给出每个 BSD 接口的真实类型（IEEE80211 / Ethernet / WWAN…）。
+    static func connectionKind(ofBSDName name: String) -> ConnectionKind? {
+        guard let interfaces = SCNetworkInterfaceCopyAll() as? [SCNetworkInterface] else { return nil }
+        for interface in interfaces {
+            guard let bsdName = SCNetworkInterfaceGetBSDName(interface) as? String,
+                  bsdName == name else { continue }
+            guard let type = SCNetworkInterfaceGetInterfaceType(interface) as? String else { return nil }
+            // 这些常量是 CFString，先转成 String 再比对
+            let kinds: [(CFString, ConnectionKind)] = [
+                (kSCNetworkInterfaceTypeIEEE80211, .wifi),
+                (kSCNetworkInterfaceTypeEthernet, .ethernet),
+                (kSCNetworkInterfaceTypeWWAN, .cellular),
+                (kSCNetworkInterfaceTypePPP, .vpn),
+                (kSCNetworkInterfaceTypeIPSec, .vpn),
+                ("Bond" as CFString, .bond),
+                ("VLAN" as CFString, .vlan),
+                ("Bridge" as CFString, .bridge),
+            ]
+            for (constant, kind) in kinds where (constant as String) == type {
+                return kind
+            }
+            return .other
+        }
+        return nil
     }
 
     // MARK: - 底层读取
@@ -191,10 +242,21 @@ final class NetworkSensor {
             var info = table[name] ?? InterfaceInfo(index: 0, name: name,
                                                    rawReceived: 0, rawSent: 0,
                                                    isUp: isUp, isLoopback: isLoopback,
-                                                   hasAddress: false)
+                                                   hasAddress: false, ipv4Address: nil)
             if table[name] == nil { order.append(name) }
             info.isUp = info.isUp || isUp
             info.hasAddress = info.hasAddress || family == AF_INET || family == AF_INET6
+            if family == AF_INET, info.ipv4Address == nil {
+                // 用类型化绑定取 sin_addr：手算偏移很容易错
+                //（sockaddr_in 在 Darwin 上是 sin_len(1) + sin_family(1) + sin_port(2) + sin_addr(4)，
+                // 曾经按 5 字节偏移取到 0.0.0.1）。
+                let sin = UnsafeRawPointer(addr).assumingMemoryBound(to: sockaddr_in.self).pointee
+                var host = sin.sin_addr
+                var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                if inet_ntop(AF_INET, &host, &buffer, socklen_t(INET_ADDRSTRLEN)) != nil {
+                    info.ipv4Address = String(cString: buffer)
+                }
+            }
 
             if family == AF_LINK {
                 // AF_LINK 的 `ifa_addr` 就是 sockaddr_dl，`sdl_index` 即接口索引。

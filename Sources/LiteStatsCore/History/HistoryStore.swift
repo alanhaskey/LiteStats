@@ -339,7 +339,6 @@ public final class HistoryStore: @unchecked Sendable {
         if liveAppDay == nil { liveAppDay = LiveAppBucket(start: dayStart) }
 
         // 名字表一次采样只写一次（一批 100 个新名字只排 1 个磁盘任务，而不是 100 个）。
-        var nameUpdates: [Data] = []
         for sample in appSamples {
             let name = sample.name
             guard !name.isEmpty else { continue }
@@ -357,11 +356,8 @@ public final class HistoryStore: @unchecked Sendable {
             liveAppHour?.apps[name] = entry
             liveAppDay?.apps[name] = entry
         }
-        if !nameUpdates.isEmpty {
-            var payload = Data()
-            for chunk in nameUpdates { payload.append(chunk) }
-            scheduleLocked(.appNames, .append(payload))
-        }
+        // name→path 旁表已停写（界面只用应用名，完整路径会无界累积），
+        // app-names.bin 在启动时删除。
     }
 
     // MARK: - 封口（锁内）

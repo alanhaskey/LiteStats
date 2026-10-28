@@ -227,6 +227,36 @@ enum SelfTest {
         // MARK: 4c. 形变动画（水滴展开）
         verifyIslandMorph(layout: layout, service: service)
 
+        // MARK: 2d. 网络信息（IP / 网关）
+
+        let network = service.snapshot?.network
+        let ipv4Pattern = #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#
+        if let ip = network?.ipAddress {
+            check("能读到本机 IPv4 地址", ip.range(of: ipv4Pattern, options: .regularExpression) != nil,
+                  "\(ip)（接口 \(network?.interfaceName ?? "—")）")
+            check("IPv4 各段都在 0…255 内",
+                  ip.split(separator: ".").allSatisfy { (Int($0) ?? 999) <= 255 }, ip)
+        } else {
+            info("没读到 IPv4（可能未联网），跳过地址格式检查")
+        }
+        if let gateway = network?.gateway {
+            check("能读到默认网关", gateway.range(of: ipv4Pattern, options: .regularExpression) != nil,
+                  gateway)
+            check("网关与本机地址不重复", gateway != network?.ipAddress)
+        } else {
+            info("没读到默认网关，跳过")
+        }
+        if let kind = network?.connectionKind {
+            check("能识别连接方式（Wi-Fi / 以太网 / 蜂窝…）",
+                  ConnectionKind.allCases.contains(kind), kind.rawValue)
+            info("连接方式：\(kind.rawValue)（接口 \(network?.interfaceName ?? "—")）")
+        } else {
+            info("没识别出连接方式，跳过")
+        }
+        check("面板高度包含新增的网络信息行",
+              Theme.bodyHeight == 273,
+              "\(Theme.bodyHeight)（底行 12pt + 间距 6）")
+
         // MARK: 5. 采样数据（端到端）
 
         service.isPanelExpanded = true

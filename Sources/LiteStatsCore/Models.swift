@@ -132,6 +132,18 @@ public struct GPUStats: Sendable, Equatable {
                                              inUseMemory: nil, allocatedMemory: nil)
 }
 
+/// 主接口的"连接方式"。界面上用它代替 `en0` 这种网口标识。
+public enum ConnectionKind: String, Sendable, Equatable, CaseIterable {
+    case wifi
+    case ethernet
+    case cellular
+    case vpn
+    case bridge
+    case bond
+    case vlan
+    case other
+}
+
 public struct NetworkStats: Sendable, Equatable {
     /// 相对上一次采样的速率（字节/秒）
     public let download: Double
@@ -141,15 +153,26 @@ public struct NetworkStats: Sendable, Equatable {
     public let sent: UInt64
     public let interfaceName: String?
     public let isConnected: Bool
+    /// 主接口的 IPv4 地址（例如 "192.168.1.23"）。取不到时为 nil。
+    public let ipAddress: String?
+    /// 默认网关（路由器的 IPv4 地址）。取不到时为 nil。
+    public let gateway: String?
+    /// 主接口的连接方式（Wi-Fi / 以太网 / 蜂窝…）。取不到时为 nil。
+    public let connectionKind: ConnectionKind?
 
     public init(download: Double, upload: Double, received: UInt64, sent: UInt64,
-                interfaceName: String?, isConnected: Bool) {
+                interfaceName: String?, isConnected: Bool,
+                ipAddress: String? = nil, gateway: String? = nil,
+                connectionKind: ConnectionKind? = nil) {
         self.download = download
         self.upload = upload
         self.received = received
         self.sent = sent
         self.interfaceName = interfaceName
         self.isConnected = isConnected
+        self.ipAddress = ipAddress
+        self.gateway = gateway
+        self.connectionKind = connectionKind
     }
 
     /// 接口全取不到时的降级值。

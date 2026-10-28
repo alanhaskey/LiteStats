@@ -205,7 +205,7 @@ struct SettingsView: View {
     }
 
     private static var version: String {
-        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.2.0"
+        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.0"
         return "LiteStats \(short)"
     }
 
