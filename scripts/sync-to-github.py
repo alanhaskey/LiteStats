@@ -109,11 +109,15 @@ def parse_tag(ref):
 
 # ---------------------------------------------------------------- 引导提交
 
-print("==> 1/6 引导提交（空仓库上 Git API 不可用）")
+print("==> 1/6 检查仓库状态")
+# 只有"仓库里一个 ref 都没有"时才需要引导提交（Git Data API 在完全空的仓库上不可用）。
+# ⚠️ 不要用"bootstrap 文件是否存在"来判断：历史里可能早就不含它了，
+# 那样每次都会新建一个引导提交并把 main 指向它（中断时尤其危险）。
 try:
-    api("GET", "/contents/.bootstrap")
-    print("    已有引导提交，跳过")
+    refs = api("GET", "/git/refs")
+    print(f"    已有 {len(refs.get('refs', refs) if isinstance(refs, dict) else refs)} 个 ref，跳过引导提交")
 except SystemExit:
+    print("    refs 还取不到（空仓库），造引导提交")
     api("PUT", "/contents/.bootstrap", {
         "message": "chore: 初始化仓库",
         "content": base64.b64encode(b"bootstrap\n").decode(),
